@@ -18,6 +18,7 @@ r"""迁移/清理计划器。**全程只读，不碰任何文件。**
 from __future__ import annotations
 
 import ctypes
+import ntpath
 import os
 from dataclasses import dataclass, field
 
@@ -316,8 +317,7 @@ def plan_for(record: dict, target_root: str | None = None,
     if env_auto:
         p.action = "redirect"
         p.env_var = mech["var"]
-        p.target = os.path.join(target_root or effective_target_root(),
-                                _safe_name(p.name))
+        p.target = mirror_target(target_root or effective_target_root(), path)
         # 改变量不搬旧文件，所以腾出的空间来自随后清理旧缓存
         p.reclaimable = size
         p.steps = [
@@ -346,8 +346,7 @@ def plan_for(record: dict, target_root: str | None = None,
         # 不能删、又没有官方重定向机制：搬到别的盘，原位留 junction。
         # 数据一字不少地保留，代价是多占一次复制时间，且个别软件不认重解析点。
         p.action = "junction"
-        p.target = os.path.join(target_root or effective_target_root(),
-                                _safe_name(p.name))
+        p.target = mirror_target(target_root or effective_target_root(), path)
         p.reclaimable = size
         p.steps = [
             {"n": 1, "title": "复制到新盘",
@@ -477,6 +476,67 @@ def _safe_name(name: str) -> str:
     """目录名转成可安全用于路径的形式。"""
     out = "".join("_" if c in '\\/:*?"<>|' else c for c in name)
     return out.strip(". ") or "unnamed"
+
+
+def _under(path: str, base: str) -> bool:
+    r"""path 是否在 base 之内。
+
+    **比较必须带上分隔符。** 裸 `startswith` 会把 `C:\Users\10\...` 判成
+    `C:\Users\1` 的子目录（实测确认），于是别的用户的目录会被按本用户的相对
+    路径去镜像，算出来的目标位置完全不对。
+    """
+    if not path or not base:
+        return False
+    a = ntpath.normpath(path).lower().rstrip("\\")
+    b = ntpath.normpath(base).lower().rstrip("\\")
+    return a == b or a.startswith(b + "\\")
+
+
+def mirror_suffix(path: str, user_home: str | None = None) -> str:
+    r"""把源路径转成"挂到目标根下面"的相对后缀，保留原有层级。
+
+        C:\Users\1\AppData\Local\ms-playwright  ->  AppData\Local\ms-playwright
+        C:\ProgramData\Adobe                    ->  ProgramData\Adobe
+
+    配上根 `G:\1` 就得到 `G:\1\AppData\Local\ms-playwright`——新盘看起来是用户
+    目录的镜像，一眼能看出东西原本在哪。
+
+    **为什么不用软件显示名当叶子**（原先是 `_safe_name(p.name)`）：显示名会重复。
+    基准数据里 106 条有 16 个重名，NVIDIA 一家占 6 条，全都算出同一个
+    `<root>\NVIDIA`。后果分两种：junction 撞 junction 被 executor 以"目标目录
+    已存在且非空"拒绝（安全但提示看不出根因）；redirect 撞 redirect **不拦**
+    （executor 只 mkdir(exist_ok=True)），两个软件的环境变量指到同一个目录、
+    缓存互相覆盖。源路径天然唯一，用它做后缀一次消掉这一整类问题，不必再单独
+    写一套撞名检测。
+
+    `user_home` 可注入：基准 fixture 是别的机器扫的，用户名不同。直接读本机
+    HOME 会让断言只在开发机成立——`attribute_v4.py` 与 `collect_evidence.py`
+    早就是这个模式。
+    """
+    home = user_home or os.path.expanduser("~")
+    p = ntpath.normpath(path or "")
+
+    if _under(p, home):
+        # 同盘才走 relpath：跨盘/UNC 它会抛 ValueError（实测），而 _under 已
+        # 保证同盘，所以这里是安全的。
+        rel = ntpath.relpath(p, ntpath.normpath(home))
+    else:
+        # 不在用户目录下（ProgramData、Program Files 之类）：去掉盘符保留其余层级。
+        # UNC 的 splitdrive 给出 ('\\\\NAS\\share', '\\x')，同样只剩后半段。
+        rel = ntpath.splitdrive(p)[1].lstrip("\\")
+
+    rel = rel.strip("\\").strip()
+    # 兜底：源恰好等于 home、或是盘根、或空串时 rel 会是 "." 或空。
+    # 空后缀会让 join 得到根目录本身——那意味着直接往根上做 junction，
+    # 是事故级的，必须给个明确的名字。
+    if not rel or rel == ".":
+        return "unnamed"
+    return rel
+
+
+def mirror_target(root: str, path: str, user_home: str | None = None) -> str:
+    """目标完整路径 = 根 + 镜像后缀。"""
+    return os.path.join(root, mirror_suffix(path, user_home))
 
 
 def plan_all(records: list[dict], target_root: str | None = None,

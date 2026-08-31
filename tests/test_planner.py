@@ -4,6 +4,7 @@ r"""计划器回归。**重点在拦阻，不在候选列表。**
 一次优化机会），也不能把不能动的判成能动（他丢数据）。因此每条拦阻规则都单独有测试，
 而"能动"只需少量用例。
 """
+import ntpath
 import os
 
 import pytest
@@ -393,3 +394,83 @@ def test_multi_target_hints_are_not_env():
 def test_resolve_none_returns_none():
     assert redirect_mod.resolve(None) is None
     assert redirect_mod.resolve("") is None
+
+
+# ── 目标路径按源结构镜像 ──────────────────────────────────────────────────
+#
+# 全部传 user_home 而不读本机 HOME：基准 fixture 是别的机器扫的，用户名不同，
+# 读本机的话断言只在开发机成立——那是"靠巧合绿"那一族。
+
+HOME = r"C:\Users\alice"
+
+
+def test_mirror_keeps_source_layout_under_root():
+    r"""用户目录下的路径：去掉 home 前缀，其余层级原样挂到根下。"""
+    assert planner.mirror_suffix(
+        r"C:\Users\alice\AppData\Local\ms-playwright", HOME
+    ) == ntpath.join("AppData", "Local", "ms-playwright")
+    assert planner.mirror_target(
+        r"G:\alice", r"C:\Users\alice\AppData\Roaming\Code", HOME
+    ) == ntpath.join(r"G:\alice", "AppData", "Roaming", "Code")
+
+
+def test_mirror_outside_home_drops_only_the_drive():
+    r"""不在用户目录下（ProgramData 等）：只去盘符，保留其余层级。"""
+    assert planner.mirror_suffix(r"C:\ProgramData\Adobe", HOME) == \
+        ntpath.join("ProgramData", "Adobe")
+    assert planner.mirror_suffix(r"C:\Program Files\Foo\Bar", HOME) == \
+        ntpath.join("Program Files", "Foo", "Bar")
+
+
+def test_user_sibling_dir_is_not_treated_as_under_home():
+    r"""`C:\Users\alice2` 不是 `C:\Users\alice` 的子目录。
+
+    裸 `startswith` 会判成是（实测确认），于是别的用户的目录被按本用户的相对
+    路径镜像，算出来的位置完全不对。判据必须带路径分隔符。
+    """
+    sib = r"C:\Users\alice2\AppData\Local\x"
+    assert planner.mirror_suffix(sib, HOME) == \
+        ntpath.join("Users", "alice2", "AppData", "Local", "x")
+
+
+def test_mirror_suffix_never_empty():
+    """后缀不能为空——空后缀会让目标退化成根目录本身。
+
+    那意味着直接往根上做 junction 或把环境变量指到根，是事故级的。
+    """
+    for p in [HOME, HOME + "\\", "C:\\", "", "."]:
+        s = planner.mirror_suffix(p, HOME)
+        assert s and s.strip("\\. "), f"{p!r} 算出空后缀 {s!r}"
+
+
+def test_same_name_different_paths_get_distinct_targets(tmp_path):
+    r"""同名不同路径必须落到不同目标。
+
+    这是原先 `<root>\<软件显示名>` 的缺陷：基准数据 106 条里有 16 个重名，
+    NVIDIA 一家 6 条，全算出同一个 `<root>\NVIDIA`。junction 撞 junction 被
+    executor 以"目标目录已存在且非空"拒绝（安全但看不出根因）；redirect 撞
+    redirect **不拦**，两个软件的环境变量指到同一个目录、缓存互相覆盖。
+
+    不用 fixture 验：那是别机器扫的，92/106 条会被 `missing` 阻断，一条 target
+    都算不出来，"没撞车"是假结论。
+    """
+    dst = tmp_path / "dst"
+    a, b = tmp_path / "L" / "NVIDIA", tmp_path / "R" / "NVIDIA"
+    for d in (a, b):
+        d.mkdir(parents=True)
+        (d / "blob").write_bytes(b"x" * 4096)
+
+    # 不用 rec()：它固定把目录拼成 tmp_path/name，造不出"同名不同路径"。
+    # 要落到 junction（而不是 cleanup）得满足 _junction_worthy：cat 不可清理、
+    # owner_kind == "app"、owner 非空、体积过门槛。
+    def at(p):
+        return {"path": str(p), "name": "NVIDIA", "size": 3 * 2**30, "files": 10,
+                "cat": "程序数据", "owner_kind": "app", "conf": 0.9,
+                "redirect": None, "owner": "NVIDIA", "why": "测试用"}
+
+    ta = planner.plan_for(at(a), target_root=str(dst)).target
+    tb = planner.plan_for(at(b), target_root=str(dst)).target
+    assert ta and tb, f"至少一条没算出 target: {ta!r} {tb!r}"
+    assert ta.lower() != tb.lower(), f"两条同名记录撞到同一个目标：{ta}"
+    assert ntpath.basename(ta.rstrip("\\")) == "NVIDIA"
+    assert ntpath.basename(tb.rstrip("\\")) == "NVIDIA"
