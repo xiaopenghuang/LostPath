@@ -256,6 +256,40 @@ export async function saveTargetRoot(
   return r.json();
 }
 
+export interface OverrideEntry {
+  source: string;
+  root: string;
+  /** 这条现在还能不能用。失效时后端静默回落到全局根，界面必须显式说出来。 */
+  valid: boolean;
+  errors: TargetRootIssue[];
+}
+
+/**
+ * 给单个源目录指定专属的目标根。`path` 传 null 清掉这一条。
+ *
+ * 回来的 `target` 是**后端算好的**完整目标路径。界面直接显示它，不自己拼——
+ * 镜像规则只该有一份（planner.mirror_suffix），前端复制一遍必然与后端漂移，
+ * 症状是"界面显示的位置和实际搬过去的不一样"，而两边都看起来对。
+ */
+export async function setTargetRootOverride(
+  source: string,
+  path: string | null,
+): Promise<TargetRootCheck & { target?: string; action?: string; error?: string }> {
+  const r = await fetch('/api/target-root/override', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ source, path }),
+  });
+  return r.json();
+}
+
+export async function fetchTargetRootOverrides(): Promise<OverrideEntry[]> {
+  const r = await fetch('/api/target-root/overrides');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  const d = await r.json();
+  return Array.isArray(d.overrides) ? d.overrides : [];
+}
+
 export async function fetchPlan(targetRoot?: string): Promise<PlanReport> {
   const q = targetRoot ? `?target_root=${encodeURIComponent(targetRoot)}` : '';
   const r = await fetch(`/api/plan${q}`);
