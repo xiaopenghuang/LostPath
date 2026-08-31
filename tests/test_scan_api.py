@@ -27,6 +27,25 @@ pytestmark = pytest.mark.integration
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SCAN_TIMEOUT_SEC = int(os.getenv("LOSTPATH_INTEGRATION_SCAN_TIMEOUT_SEC", "480"))
 
+# GitHub runner 上全盘扫描跑不完：实测 480 秒只到 23%，外推全盘约 35 分钟
+# （runner 预装 dotnet/Android/VS build tools，系统盘几十万个小文件，比开发机
+# 慢一个量级）。调大 timeout 不是解 —— 那只是把 CI 拖成 40 分钟一轮。
+#
+# 而本文件的定位是**验端点契约与管道跑得通**，不是压测扫描速度；其余 28 条
+# 契约测试在 runner 上都通过，只有下面这两条要求"整盘扫到 done"。
+#
+# `scan_root()` 刻意不接受调用方指定（见 lostpath/scan/runner.py 开头），
+# 所以没法让 CI 去扫个小目录 —— 那条不变量不该为了测试去破。
+#
+# 用独立开关而不是直接看 CI：本机跑得完，设 LOSTPATH_RUN_FULL_SCAN_TESTS=1
+# 就能在 CI 上强开，判据是显式的而不是"猜环境"。
+_IN_CI = os.getenv("CI") == "true"
+_FORCE_FULL_SCAN = os.getenv("LOSTPATH_RUN_FULL_SCAN_TESTS") == "1"
+needs_complete_scan = pytest.mark.skipif(
+    _IN_CI and not _FORCE_FULL_SCAN,
+    reason="全盘扫描在 CI runner 上约需 35 分钟；设 LOSTPATH_RUN_FULL_SCAN_TESTS=1 可强制运行",
+)
+
 
 def free_port():
     with socket.socket() as s:
@@ -134,6 +153,7 @@ def test_cancel_reports_cancel_requested_immediately(engine):
         assert final["state"] == "cancelled"
 
 
+@needs_complete_scan
 def test_full_scan_completes_and_data_is_refreshed(engine):
     """整条真路径：扫完后 /api/data 必须已经是新数据。
 
@@ -167,8 +187,16 @@ def test_full_scan_completes_and_data_is_refreshed(engine):
         "合成实体没有出现，痕迹挂接可能没跑"
 
 
+@needs_complete_scan
 def test_scan_after_completion_is_allowed(engine):
-    """跑完一次后应能再起一次，单例锁不能把自己锁死。"""
+    """跑完一次后应能再起一次，单例锁不能把自己锁死。
+
+    **依赖前一条测试**：它自己不等扫完，"跑完一次"这个前提是靠
+    `test_full_scan_completes_and_data_is_refreshed` 先跑完提供的（pytest 按文件
+    顺序执行）。所以两条必须同进同退 —— 只跳前一条的话，这条就退化成
+    `test_cancel_reports_cancel_requested_immediately` 的重复，而名字仍宣称
+    验了"完成后可重启"，比跳过更糟。
+    """
     status, _job = call(f"{engine}/api/scan", method="POST")
     assert status == 200
     call(f"{engine}/api/scan/cancel", method="POST")
