@@ -8,4 +8,4 @@
   api/        FastAPI 应用
   eval/       基准评分，防归因退化
 """
-__version__ = "0.2.0"
+__version__ = "0.3.0"
