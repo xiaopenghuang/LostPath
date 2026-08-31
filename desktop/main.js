@@ -3,6 +3,8 @@
 const { app, BrowserWindow, shell } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
+// https 只用于查新版本（api.github.com）。引擎那边一律走 http 到 127.0.0.1。
+const https = require('https');
 const path = require('path');
 
 // 引擎有两种形态：
@@ -58,6 +60,148 @@ function log(...parts) {
     } catch { /* 文件还不存在 */ }
     fs.appendFileSync(LOG_FILE, line);
   } catch { /* 日志写不进去不该影响程序运行 */ }
+}
+
+// ── 检查新版本 ────────────────────────────────────────────────────────────
+//
+// 只做"发现并告知"，不下载、不安装。用户点了就跳浏览器到 Release 页，自己下。
+//
+// 为什么放在壳层而不是引擎里：**引擎目前零对外网络请求**，是纯本地服务。
+// 那条性质值得保住——一个读注册表、扫全盘的东西不出网，用户才好放心。
+// 壳层本来就要 shell.openExternal，多一个 https 请求不改变它的性质。
+//
+// 为什么不用 electron-updater：那是为"自动下载+安装"设计的，而自动安装在本项目
+// 有个硬障碍——引擎子进程锁着 resources/lostpath-engine.exe，Windows 不允许覆盖
+// 正在运行的可执行文件镜像，装到一半会失败。绕开它要先杀引擎再等它死透
+// （taskkill 异步，200~500ms），跟提权交接那个坑同一类。等真要做自动安装时
+// 再单独处理，别混在这里。
+
+/** 发布页地址。**写成常量**，理由见 maybeNotifyUpdate 里的说明。 */
+const RELEASES_URL = 'https://github.com/xiaopenghuang/LostPath/releases/latest';
+const UPDATE_API = 'https://api.github.com/repos/xiaopenghuang/LostPath/releases/latest';
+const UPDATE_TIMEOUT_MS = 10000;
+
+/**
+ * 比较两个语义版本。返回 >0 表示 a 比 b 新，0 相等，<0 更旧，无法解析返回 NaN。
+ *
+ * **不能按字符串比大小**：那样 `"0.10.0" > "0.9.0"` 为 false（逐字符 '1' < '9'），
+ * 于是 0.10.0 会被判成比 0.9.0 旧，用户被反复推送旧版。
+ *
+ * 解析失败返回 NaN 是刻意的：NaN 参与任何比较都得 false，所以调用方那句
+ * `compareVersions(...) > 0` 天然把"字段缺失/垃圾输入"判成没有更新——
+ * 宁可漏报，不可误报。
+ */
+function compareVersions(a, b) {
+  const parse = (v) => {
+    if (typeof v !== 'string') return null;
+    // 剥掉 tag 的 v 前缀（GitHub 上是 v0.1.0，package.json 里是 0.1.0）；
+    // 只取三段主版本，-beta.1 这类后缀忽略
+    const m = /^v?(\d+)\.(\d+)\.(\d+)/.exec(v.trim());
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (!pa || !pb) return NaN;
+  for (let i = 0; i < 3; i++) {
+    if (pa[i] !== pb[i]) return pa[i] - pb[i];
+  }
+  return 0;
+}
+
+/**
+ * 拉一次 GitHub 的 latest release。**任何失败都返回 null，不抛、不重试。**
+ *
+ * 失败是常态而不是异常：断网、公司代理、被墙、匿名频率限制（60 次/小时/IP）
+ * 都会走到这里。检查更新失败不该让用户看见任何东西——他打开这个软件是为了
+ * 清 C 盘，不是为了知道我们连不上 GitHub。
+ */
+function fetchLatestRelease() {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (!done) { done = true; resolve(v); } };
+
+    let req;
+    try {
+      req = https.get(UPDATE_API, {
+        // GitHub API 不带 User-Agent 直接 403。写明是谁在请求。
+        headers: {
+          'User-Agent': `LostPath/${app.getVersion()}`,
+          'Accept': 'application/vnd.github+json',
+        },
+        timeout: UPDATE_TIMEOUT_MS,
+      }, (res) => {
+        if (res.statusCode !== 200) {
+          // 403 多半是频率限制，404 是仓库还没有 release。都不值得打扰用户。
+          log('update', 'HTTP ' + res.statusCode);
+          res.resume();   // 必须消费掉，否则 socket 不释放
+          return finish(null);
+        }
+        // 限制读入量：正常响应几 KB，设上限免得异常响应把内存吃了
+        let body = '';
+        let tooBig = false;
+        res.setEncoding('utf8');
+        res.on('data', (c) => {
+          if (tooBig) return;
+          body += c;
+          if (body.length > 512 * 1024) { tooBig = true; req.destroy(); }
+        });
+        res.on('end', () => {
+          if (tooBig) return finish(null);
+          try {
+            finish(JSON.parse(body));
+          } catch {
+            finish(null);
+          }
+        });
+        res.on('error', () => finish(null));
+      });
+    } catch {
+      return finish(null);
+    }
+    req.on('timeout', () => { req.destroy(); finish(null); });
+    req.on('error', (e) => { log('update', '请求失败 ' + e.message); finish(null); });
+  });
+}
+
+/**
+ * 查一次新版本，有就弹个原生对话框。没有、或查不了，就什么都不做。
+ *
+ * **URL 用常量而不是响应里的 `html_url`**：那个字段来自网络，把它直接交给
+ * shell.openExternal 等于让远端决定我们打开什么——DNS 被劫持或响应被篡改时
+ * 可以变成任意 URL（含 file:// 之类）。发布页地址本来就是固定的，没有任何
+ * 理由从网络取。tag 只用于显示，且截断长度。
+ */
+async function maybeNotifyUpdate() {
+  const current = app.getVersion();
+  const rel = await fetchLatestRelease();
+  if (!rel) return;
+  // 草稿和预发布不推给普通用户
+  if (rel.draft || rel.prerelease) return;
+
+  const tag = typeof rel.tag_name === 'string' ? rel.tag_name : '';
+  if (!(compareVersions(tag, current) > 0)) {
+    log('update', `无需更新（远端 ${tag || '?'} / 本地 ${current}）`);
+    return;
+  }
+  log('update', `发现新版 ${tag}，当前 ${current}`);
+
+  if (!win || win.isDestroyed()) return;
+  const { dialog } = require('electron');
+  // 截断：tag 来自网络，不该让它决定对话框有多大
+  const shown = tag.slice(0, 32);
+  const r = await dialog.showMessageBox(win, {
+    type: 'info',
+    title: 'LostPath',
+    message: `发现新版本 ${shown}`,
+    detail: `当前版本 ${current}。\n\n`
+          + '点「去下载」会在浏览器里打开发布页，下载后手动安装即可；'
+          + '安装程序会覆盖旧版本，不影响已有的扫描快照与配置。',
+    buttons: ['去下载', '以后再说'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  });
+  if (r.response === 0) shell.openExternal(RELEASES_URL);
 }
 
 /** 窗口图标。打包后在 resources/，开发时在仓库 ico/。都没有就返回 undefined。 */
@@ -407,6 +551,13 @@ function start() {
       if (shown || !win || win.isDestroyed()) return;
       shown = true;
       win.show();
+      // 窗口可见之后再查新版本。**挂在这里而不是 whenReady 开头**：对话框要有父窗口
+      // 才会正确居中并模态化，而且不该跟引擎启动、首屏加载抢那几秒。
+      // 延迟 5 秒是为了让用户先看到界面 —— 一打开就弹窗像流氓软件。
+      // 整段包在 catch 里：查更新失败绝不能影响主流程。
+      setTimeout(() => {
+        maybeNotifyUpdate().catch((e) => log('update', '检查失败 ' + e.message));
+      }, 5000);
     };
     win.once('ready-to-show', showOnce);
     setTimeout(showOnce, 2500);
