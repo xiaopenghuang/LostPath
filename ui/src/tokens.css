@@ -45,6 +45,14 @@
   --sp-6: 26px;
   --page-pad: 22px;
   --page-max: 1180px;   /* 旧值是 1280，Electron 主体 1080 起，1180 更贴 */
+
+  /* ---- 圆角规范 ---- */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
 }
 
 /* ---- 焦点环 ---- */

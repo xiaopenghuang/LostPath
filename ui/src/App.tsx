@@ -215,9 +215,14 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
     <div style={{ height: '100vh', display: 'flex', background: 'var(--bg)' }}>
       {/* 侧边栏 */}
       <aside
+        className="lp-sidebar"
         style={{
           width: 228,
           flexShrink: 0,
+          // className 是给 index.css 里的 .lp-sidebar 用的：侧栏是全应用唯一以
+          // --deep 为底的面，而浅色下 --deep 比 --bg 更**亮**，几个前景色压上去
+          // 会掉线（--amber 3.81、--tx3 4.10、--green 3.97）。与其逐处改颜色，
+          // 不如在这一个容器里把这些令牌整体覆盖掉——以后往侧栏加东西就自动安全。
           background: 'var(--deep)',
           borderRight: '1px solid var(--line)',
           display: 'flex',
@@ -263,7 +268,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
               type="button"
               onClick={() => setView(n.key as View)}
               aria-current={active ? 'page' : undefined}
-              className="lp-nav"
+              className={`lp-nav ${active ? 'lp-nav-active' : ''}`}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -271,23 +276,31 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
                 width: '100%',
                 textAlign: 'left',
                 font: 'inherit',
-                padding: '8px 12px',
-                borderRadius: 8,
+                padding: '9px 12px',
+                borderRadius: 'var(--radius-md)',
                 marginBottom: 4,
                 cursor: 'pointer',
                 fontSize: 'var(--fs-md)',
-                background: active ? 'var(--blue)' : 'transparent',
-                color: active ? '#fff' : 'var(--tx2)',
+                background: 'transparent',
+                color: active ? undefined : 'var(--tx2)',
                 border: '1px solid transparent',
               }}
             >
-              {n.icon}
+              <span style={{ fontSize: 16, display: 'flex', alignItems: 'center' }}>{n.icon}</span>
               <span>{n.label}</span>
               {n.key === 'recycle' && recycleBytes > 0 && (
                 <span
                   style={{
-                    marginLeft: 'auto', fontSize: 10.5,
-                    color: active ? '#fff' : 'var(--red)',
+                    marginLeft: 'auto',
+                    fontSize: 'var(--fs-xs)',
+                    padding: '1px 6px',
+                    borderRadius: 'var(--radius-full)',
+                    // 底用 color-mix 从当前主题的 --red 现算，而不是写死一个 rgba：
+                    // 原先写死的是深色版的红，浅色主题下底色和字色会一起偏，
+                    // 结果对比度掉到 3.35。字色走 --danger-fg，见 index.css。
+                    background: 'color-mix(in srgb, var(--red) 15%, transparent)',
+                    color: 'var(--danger-fg)',
+                    fontWeight: 600,
                   }}
                 >
                   {fmtSize(recycleBytes)}
@@ -317,7 +330,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
               background: 'transparent',
               border: '1px solid transparent',
               padding: '8px 12px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               fontSize: 'var(--fs-md)',
               color: 'var(--tx2)',
               cursor: 'pointer',
@@ -334,7 +347,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
             type="button"
             onClick={() => setView('settings')}
             aria-current={view === 'settings' ? 'page' : undefined}
-            className="lp-nav"
+            className={`lp-nav ${view === 'settings' ? 'lp-nav-active' : ''}`}
             style={{
               display: 'flex',
               alignItems: 'center',
@@ -342,13 +355,13 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
               width: '100%',
               textAlign: 'left',
               font: 'inherit',
-              background: view === 'settings' ? 'var(--blue)' : 'transparent',
-              border: '1px solid transparent',
+              background: 'transparent',
               padding: '8px 12px',
-              borderRadius: 8,
+              borderRadius: 'var(--radius-md)',
               fontSize: 'var(--fs-md)',
-              color: view === 'settings' ? '#fff' : 'var(--tx2)',
+              color: view === 'settings' ? undefined : 'var(--tx2)',
               cursor: 'pointer',
+              border: '1px solid transparent',
             }}
           >
             <SettingOutlined />
@@ -429,7 +442,9 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
             style={{
               marginTop: 6, width: '100%', display: 'flex', alignItems: 'center',
               gap: 8, justifyContent: 'center', font: 'inherit',
-              fontSize: 'var(--fs-xs)', color: 'var(--blue2)',
+              // 用 --accent-fg 而非 --blue2：这颗按钮在侧栏（底是 --deep），
+              // 浅色下 --blue2 压上去只有 2.65。11px 的字尤其经不起。
+              fontSize: 'var(--fs-xs)', color: 'var(--accent-fg)',
               background: 'transparent', border: '1px dashed var(--line2)',
               borderRadius: 8, padding: '7px 10px', cursor: 'pointer',
             }}

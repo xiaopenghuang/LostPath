@@ -49,7 +49,17 @@ const DARK_TOKENS = {
   algorithm: antdTheme.darkAlgorithm,
   token: {
     colorPrimary: '#2f81f7',
+    colorPrimaryHover: '#4493f8',
     colorInfo: '#4493f8',
+    // antd 的 link / ghost 按钮颜色是从 colorPrimary 推的，推完不验对比度：
+    // 默认推出来的是 #3d80d6，压在 --panel 上只有 4.45。这里钉成 --blue2 的值
+    // （6.99）。不写成 var(--blue2) 是因为 antd 要拿它做色阶计算，得是字面色值。
+    colorLink: '#60a5fa',
+    colorLinkHover: '#93c5fd',
+    // antd 默认的 colorTextDescription 是 rgba(255,255,255,0.45)，压在卡片底上
+    // 4.37——差 0.13 不过线。它不是装饰性文字：Empty 的说明、Statistic 的
+    // 副标题都用它。提到 0.55（5.83）。
+    colorTextDescription: 'rgba(255, 255, 255, 0.55)',
     colorBgBase: '#0d1117',
     colorBgContainer: '#161b22',
     colorBgElevated: '#1c2128',
@@ -57,7 +67,15 @@ const DARK_TOKENS = {
     colorBorderSecondary: 'rgba(240,246,252,0.08)',
   },
   components: {
-    Card: { colorBgContainer: '#161b22' },
+    Card: {
+      colorBgContainer: '#161b22',
+      colorBorderSecondary: 'rgba(240,246,252,0.1)',
+      boxShadowTertiary: '0 1px 3px rgba(0, 0, 0, 0.35)',
+    },
+    Progress: {
+      defaultColor: '#2f81f7',
+      remainingColor: 'rgba(240,246,252,0.08)',
+    },
     Table: {
       colorBgContainer: 'transparent',
       headerBg: 'rgba(240,246,252,0.04)',
@@ -77,7 +95,14 @@ const LIGHT_TOKENS = {
   algorithm: antdTheme.defaultAlgorithm,
   token: {
     colorPrimary: '#0969da',
+    colorPrimaryHover: '#218bff',
     colorInfo: '#218bff',
+    // 浅色下 antd 推出来的 link 色是 #218bff（= --blue2），压在白卡片上只有 3.39。
+    // 钉成 --accent-fg 的值（7.59）。
+    colorLink: '#0550ae',
+    colorLinkHover: '#0969da',
+    // 浅色下默认 rgba(0,0,0,0.45) 只有 3.27，比深色差得更多。0.55 -> 4.58。
+    colorTextDescription: 'rgba(0, 0, 0, 0.55)',
     colorBgBase: '#f6f8fa',
     colorBgContainer: '#ffffff',
     colorBgElevated: '#ffffff',
@@ -85,7 +110,15 @@ const LIGHT_TOKENS = {
     colorBorderSecondary: 'rgba(31,35,40,0.1)',
   },
   components: {
-    Card: { colorBgContainer: '#ffffff' },
+    Card: {
+      colorBgContainer: '#ffffff',
+      colorBorderSecondary: 'rgba(31,35,40,0.12)',
+      boxShadowTertiary: '0 1px 3px rgba(31, 35, 40, 0.08)',
+    },
+    Progress: {
+      defaultColor: '#0969da',
+      remainingColor: 'rgba(31,35,40,0.08)',
+    },
     Table: {
       colorBgContainer: 'transparent',
       headerBg: '#f6f8fa',

@@ -16,9 +16,9 @@ function ScanButtons({
 }) {
   const { status, starting, busy, begin, askCancel } = scan;
   return (
-    <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+    <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, alignItems: 'center' }}>
       {busy && (
-        <Button danger onClick={askCancel} disabled={status?.cancel_requested}>
+        <Button danger onClick={askCancel} disabled={status?.cancel_requested} style={{ borderRadius: 'var(--radius-md)' }}>
           {status?.cancel_requested ? '正在取消…' : '取消'}
         </Button>
       )}
@@ -26,11 +26,18 @@ function ScanButtons({
         <Button
           type="primary"
           size="large"
-          icon={<RadarChartOutlined />}
+          className="lp-scan-btn"
+          icon={<RadarChartOutlined style={{ fontSize: 18 }} />}
           loading={starting || busy}
           onClick={begin}
+          style={{
+            height: 42,
+            padding: '0 20px',
+            borderRadius: 'var(--radius-md)',
+            fontSize: 'var(--fs-md)',
+          }}
         >
-          {busy ? '扫描中…' : '发起深度扫描'}
+          {busy ? '全盘扫描中…' : '发起深度扫描'}
         </Button>
       </Tooltip>
     </div>
@@ -131,18 +138,37 @@ function SegmentedDriveBar({
   const pctOf = (n: number) => (drive.total > 0 ? (n / drive.total) * 100 : 0);
   const freePct = Math.round(pctOf(drive.free));
   return (
-    <div>
+    <div style={{ padding: '2px 0' }}>
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'baseline',
-        fontSize: 'var(--fs-md)', marginBottom: 7, gap: 8,
+        fontSize: 'var(--fs-md)', marginBottom: 8, gap: 8,
       }}>
-        <b style={{ color: 'var(--tx)' }}>
-          <span className="lp-mono" style={{ color: 'var(--blue2)' }}>{drive.letter}</span> 本地磁盘
+        <b style={{ color: 'var(--tx)', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span
+            className="lp-mono"
+            style={{
+              padding: '1px 5px',
+              borderRadius: 'var(--radius-xs)',
+              background: 'var(--panel2)',
+              border: '1px solid var(--line2)',
+              color: 'var(--accent-fg)',
+              fontSize: 'var(--fs-sm)',
+            }}
+          >
+            {drive.letter}
+          </span>
+          本地磁盘
         </b>
         <span className="lp-num" style={{ color: 'var(--tx2)', fontSize: 'var(--fs-sm)' }}>
           已用 {fmtSize(used)} / {fmtSize(drive.total)}
-          {/* 剩余百分比比绝对值更能说明"还够不够用"，这是这条图存在的理由 */}
-          <span style={{ color: freePct <= 10 ? 'var(--red)' : 'var(--tx3)', marginLeft: 6 }}>
+          {/* 剩余百分比比绝对值更能说明"还够不够用" */}
+          <span
+            style={{
+              fontWeight: 600,
+              color: freePct <= 10 ? 'var(--red)' : 'var(--tx2)',
+              marginLeft: 8,
+            }}
+          >
             · 剩 {freePct}%
           </span>
         </span>
@@ -152,41 +178,55 @@ function SegmentedDriveBar({
         aria-label={`${drive.letter} 共 ${fmtSize(drive.total)}，${
           all.map((s) => `${s.label} ${fmtSize(s.size)}`).join('，')}`}
         style={{
-          display: 'flex', height: 10, borderRadius: 5, overflow: 'hidden',
+          display: 'flex',
+          height: 12,
+          borderRadius: 'var(--radius-sm)',
+          overflow: 'hidden',
           background: 'var(--line)',
+          boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.15)',
         }}
       >
         {all.map((s, i) => (
-          <div
-            key={i}
-            // 刻意不加 title：原生 title 会弹一个系统样式的黑框，与界面配色无关、
-            // 延迟约 1 秒、位置不可控。而每段的名称与体积**下面的图例已经全列出来了**，
-            // 悬停再报一遍没有新信息。
-            style={{
-              width: `${pctOf(s.size)}%`,
-              background: s.color,
-              // 段与段之间留一道卡片底色的缝：这样即使两段颜色接近（或用户是
-              // 色盲），边界仍然看得见——不让颜色单独承载"这里分段了"这个信息。
-              boxShadow: i > 0 ? '-1px 0 0 0 var(--panel)' : undefined,
-              transition: `width var(--dur-base) var(--ease-out)`,
-            }}
-          />
+          // 用 antd Tooltip 而不是原生 title：原生的是系统样式黑框、延迟约 1 秒、
+          // 位置不可控。多出来的信息是百分比（图例只给绝对值），所以值得加。
+          // 但不加 cursor: pointer——这几段点了没有任何反应，指针形状是最强的
+          // "这里可点"信号，用它换一个 tooltip 提示不划算。
+          <Tooltip key={i} title={`${s.label}: ${fmtSize(s.size)} (${pctOf(s.size).toFixed(1)}%)`}>
+            <div
+              style={{
+                width: `${pctOf(s.size)}%`,
+                background: s.color,
+                // 段与段之间留一道卡片底色的缝：即使两段颜色接近（或用户是色盲），
+                // 边界仍然看得见——不让颜色单独承载"这里分段了"这个信息。
+                boxShadow: i > 0 ? '-1px 0 0 0 var(--panel)' : undefined,
+                transition: `all var(--dur-base) var(--ease-out)`,
+              }}
+            />
+          </Tooltip>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 14, marginTop: 7, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 14, marginTop: 8, flexWrap: 'wrap' }}>
         {all.map((s, i) => (
           <span
             key={i}
             style={{
-              fontSize: 'var(--fs-xs)', color: 'var(--tx2)', display: 'flex',
-              gap: 5, alignItems: 'center',
+              fontSize: 'var(--fs-xs)',
+              color: 'var(--tx2)',
+              display: 'flex',
+              gap: 5,
+              alignItems: 'center',
             }}
           >
             <span style={{
-              width: 8, height: 8, borderRadius: 2, background: s.color,
-              display: 'inline-block', flexShrink: 0,
+              width: 8,
+              height: 8,
+              borderRadius: 'var(--radius-xs)',
+              background: s.color,
+              display: 'inline-block',
+              flexShrink: 0,
+              boxShadow: 'var(--shadow-sm)',
             }} />
-            {s.label} <span className="lp-num">{fmtSize(s.size)}</span>
+            {s.label} <span className="lp-num" style={{ fontWeight: 500 }}>{fmtSize(s.size)}</span>
           </span>
         ))}
       </div>
@@ -231,11 +271,29 @@ export default function DashboardPage({
     : [];
 
   return (
-    <div className="lp-page" style={{ padding: '22px 26px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', marginBottom: 18 }}>
+    <div className="lp-page" style={{ padding: '24px 28px' }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 20,
+          padding: '16px 20px',
+          borderRadius: 'var(--radius-lg)',
+          background: 'linear-gradient(135deg, var(--panel) 0%, var(--panel2) 100%)',
+          border: '1px solid var(--line)',
+          boxShadow: 'var(--shadow-card), var(--inset-highlight)',
+        }}
+      >
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--tx)', margin: 0 }}>系统总览</h1>
-          <div style={{ color: 'var(--tx3)', fontSize: 12.5, marginTop: 3 }}>
+          <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--tx)', margin: 0, letterSpacing: -0.5 }}>
+            系统总览
+          </h1>
+          {/* 这里原先挂了一个写死的"实时就绪"徽标。删掉的理由：它无条件显示，
+              既不反映引擎连通状态也不反映快照新鲜度——而它右边紧挨着的就是
+              "上次扫描 X"，两者可以同时显示"就绪"和一个几天前的时间。
+              在一个会删文件的工具里，让状态指示器说谎比没有状态指示器更糟。 */}
+          <div style={{ color: 'var(--tx2)', fontSize: 'var(--fs-sm)', marginTop: 4 }}>
             台账实时 · C 盘足迹来自本机扫描快照
             {scannedAt && ` · 上次扫描 ${scannedAt}`}
           </div>
@@ -262,35 +320,70 @@ export default function DashboardPage({
       )}
 
       <div style={{ display: 'flex', gap: 14, marginBottom: 14 }}>
-        <Card size="small" style={{ flex: 1 }}>
-          <div style={{ fontSize: 13, color: 'var(--tx2)', marginBottom: 10 }}>扫描摘要</div>
-          <div style={{ display: 'flex', gap: 40 }}>
-            <div>
-              <div className="lp-num" style={{ fontSize: 28, fontWeight: 700, color: 'var(--blue2)' }}>
+        <Card size="small" className="lp-card-elevated" style={{ flex: 1 }}>
+          <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)', marginBottom: 12 }}>
+            扫描摘要
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--panel2)',
+                border: '1px solid var(--line2)',
+              }}
+            >
+              {/* 26px 落在"大文本"门槛（24px 加粗）之上，但底是 --panel2，
+                  浅色下 --blue2 在这个底上只有 2.90，连 3.0 都不到。用 --accent-fg。 */}
+              <div className="lp-num" style={{ fontSize: 26, fontWeight: 700, color: 'var(--accent-fg)', lineHeight: 1.15 }}>
                 {s.entities}
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--tx3)' }}>软件实体（{s.registry_raw} 条注册表记录聚合）</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx2)', marginTop: 4 }}>
+                软件实体
+              </div>
+              {/* 用 --tx2 而非 --tx3：这两个内层小盒的底是 --panel2，浅色下 --tx3 压在
+                  它上面实测 4.4999，差 0.0001 不过线（调色板标注的 4.50 是四舍五入
+                  后的样子，看着像过了）。10.5px 的字更不该踩这条线。 */}
+              <div style={{ fontSize: 10.5, color: 'var(--tx2)', marginTop: 2 }}>
+                {s.registry_raw} 条注册表聚合
+              </div>
             </div>
-            <div>
-              <div className="lp-num" style={{ fontSize: 28, fontWeight: 700, color: 'var(--tx)' }}>
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--panel2)',
+                border: '1px solid var(--line2)',
+              }}
+            >
+              <div className="lp-num" style={{ fontSize: 26, fontWeight: 700, color: 'var(--tx)', lineHeight: 1.15 }}>
                 {s.located}
               </div>
-              <div style={{ fontSize: 11.5, color: 'var(--tx3)' }}>本体已定位（任意盘）</div>
+              <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx2)', marginTop: 4 }}>
+                本体已定位
+              </div>
+              <div style={{ fontSize: 10.5, color: 'var(--tx2)', marginTop: 2 }}>
+                覆盖率 {s.entities > 0 ? Math.round((s.located / s.entities) * 100) : 0}%
+              </div>
             </div>
           </div>
           <Button
-            size="small"
+            type="primary"
+            ghost
+            size="middle"
             icon={<RocketOutlined />}
-            style={{ marginTop: 14 }}
+            style={{ marginTop: 14, width: '100%', borderRadius: 'var(--radius-md)' }}
             onClick={() => onGoto('software')}
           >
-            查看软件台账
+            进入软件台账
           </Button>
         </Card>
 
-        <Card size="small" style={{ flex: 1.6 }}>
-          <div style={{ fontSize: 13, color: 'var(--tx2)', marginBottom: 12 }}>存储拓扑</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <Card size="small" className="lp-card-elevated" style={{ flex: 1.6 }}>
+          <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)', marginBottom: 12 }}>
+            存储拓扑
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {drives.map((d) =>
               d.letter === 'C:' && cDrive ? (
                 <SegmentedDriveBar key={d.letter} drive={d} segments={cSegments} />
@@ -307,48 +400,67 @@ export default function DashboardPage({
         </Card>
       </div>
 
-      <Card size="small">
-        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-          <div style={{ fontSize: 13, color: 'var(--tx2)' }}>占用大户 · C 盘痕迹 Top 6</div>
+      <Card size="small" className="lp-card-elevated">
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
+          <div>
+            <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)' }}>
+              占用大户 · C 盘痕迹 Top 6
+            </span>
+            <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx3)', marginLeft: 8 }}>
+              优先清理或迁移这些应用可最快释放 C 盘
+            </span>
+          </div>
           <Button type="link" size="small" style={{ marginLeft: 'auto' }} onClick={() => onGoto('software')}>
             查看全部 →
           </Button>
         </div>
-        {offenders.map((e) => (
-          // button 而非 div：见 SoftwarePage 台账行同处改动。这 6 行是仪表盘上
-          // 唯一的深入入口，键盘到不了就等于首页没有出路。
-          <button
-            key={e.id}
-            type="button"
-            onClick={() => onOpenEntity(e.id)}
-            className="lp-item"
-            style={{
-              alignItems: 'center',
-              gap: 12,
-              padding: '9px 12px',
-              borderRadius: 8,
-              border: '1px solid var(--line)',
-              marginBottom: 6,
-              background: 'var(--bg)',
-            }}
-          >
-            <AppTile e={e} size={30} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {e.name}
+        {offenders.map((e) => {
+          const maxTraceSize = offenders[0]?.traces_size ?? 1;
+          const ratio = Math.min(100, Math.max(8, Math.round(((e.traces_size ?? 0) / maxTraceSize) * 100)));
+          return (
+            // button 而非 div：见 SoftwarePage 台账行同处改动。这 6 行是仪表盘上
+            // 唯一的深入入口，键盘到不了就等于首页没有出路。
+            <button
+              key={e.id}
+              type="button"
+              onClick={() => onOpenEntity(e.id)}
+              className="lp-offender-item"
+            >
+              <AppTile e={e} size={36} />
+              <div style={{ flex: 1, minWidth: 0, zIndex: 1 }}>
+                <div style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {e.name}
+                </div>
+                <code className="lp-mono" style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx3)', display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 2 }}>
+                  {e.location ?? '本体未定位'}
+                </code>
               </div>
-              <code className="lp-mono" style={{ fontSize: 11.5, color: 'var(--tx3)' }}>
-                {e.location ?? '本体未定位'}
-              </code>
-            </div>
-            <div style={{ textAlign: 'right' }}>
-              <div className="lp-num" style={{ color: 'var(--red)', fontWeight: 700, fontSize: 14 }}>
-                {fmtSize(e.traces_size)}
+
+              {/* 视觉占比微进度条（让占用大小一目了然） */}
+              <div
+                style={{
+                  position: 'absolute',
+                  right: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: `${ratio * 0.45}%`,
+                  background:
+                    'linear-gradient(90deg, transparent, color-mix(in srgb, var(--red) 8%, transparent))',
+                  pointerEvents: 'none',
+                  borderTopRightRadius: 'var(--radius-md)',
+                  borderBottomRightRadius: 'var(--radius-md)',
+                }}
+              />
+
+              <div style={{ textAlign: 'right', flexShrink: 0, zIndex: 1 }}>
+                <div className="lp-num" style={{ color: 'var(--red)', fontWeight: 700, fontSize: 'var(--fs-title)' }}>
+                  {fmtSize(e.traces_size)}
+                </div>
+                <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx3)', marginTop: 2 }}>{e.traces?.length ?? 0} 处痕迹</div>
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--tx3)' }}>C 盘痕迹 · {e.traces?.length} 处</div>
-            </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
       </Card>
     </div>
   );

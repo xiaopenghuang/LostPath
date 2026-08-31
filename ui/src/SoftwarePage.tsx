@@ -17,29 +17,66 @@ import { Scan, useScan } from './useScan';
 
 const pct = (c?: number | null) => (c == null ? '—' : `${Math.round(c * 100)}%`);
 
+/**
+ * 依据软件名称哈希生成稳定色相，让没有真图标的软件之间仍能靠颜色区分。
+ *
+ * **只返回色相，不返回亮度。** 亮度由 --tile-fg-l 按主题钉死（见 index.css）：
+ * hsl 的 L 是数学亮度而非感知亮度，同一个 L 在黄色（h≈60）和蓝紫（h≈240）下
+ * 实际明暗差一倍。原先写死 L=60% 时扫过 360 个色相：深色下 160 个不过 4.5:1
+ * （最差 h=240 只有 2.62），浅色下 360 个全不过（最差 1.12，基本看不见）。
+ * 而首页"占用大户"6 项当前一个真图标都没有，全靠这个回退显示。
+ */
+function getTileHue(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = str.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return Math.abs(hash) % 360;
+}
+
 /** 软件图标：优先真实图标（引擎从 exe 提取的 PNG），加载失败回退首字母。 */
 export function AppTile({ e, size }: { e: SoftwareEntity; size: number }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [e.icon]);
+
+  const hue = useMemo(() => getTileHue(e.name || 'App'), [e.name]);
+  const initial = (e.name?.[0] || '?').toUpperCase();
+
   return (
     <div
       style={{
         position: 'relative',
         width: size,
         height: size,
-        borderRadius: Math.round(size * 0.26),
+        borderRadius: Math.round(size * 0.28),
         background: 'var(--panel2)',
-        border: '1px solid var(--line2)',
+        border: '1px solid var(--line)',
+        boxShadow: 'var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.06)',
         display: 'grid',
         placeItems: 'center',
-        fontSize: size * 0.4,
-        color: 'var(--blue2)',
+        fontSize: Math.round(size * 0.42),
         fontWeight: 700,
         flexShrink: 0,
         overflow: 'hidden',
+        userSelect: 'none',
       }}
     >
-      <span>{e.name[0]?.toUpperCase()}</span>
+      {/* 图标缺失或提取失败时的首字母微质感回退。
+          饱和度与亮度走 --tile-fg-s / --tile-fg-l，两个主题各一套；色相是唯一
+          随软件名变化的量，所以对比度不会随数据浮动。 */}
+      <span
+        style={{
+          display: 'grid',
+          placeItems: 'center',
+          width: '100%',
+          height: '100%',
+          background: `hsla(${hue}, 40%, 50%, 0.12)`,
+          color: `hsl(${hue}, var(--tile-fg-s), var(--tile-fg-l))`,
+          letterSpacing: -0.5,
+        }}
+      >
+        {initial}
+      </span>
       {e.icon && !failed && (
         <img
           src={e.icon}
@@ -51,7 +88,7 @@ export function AppTile({ e, size }: { e: SoftwareEntity; size: number }) {
             width: '100%',
             height: '100%',
             objectFit: 'contain',
-            padding: size * 0.13,
+            padding: Math.round(size * 0.12),
             background: 'var(--panel2)',
           }}
         />
@@ -167,7 +204,7 @@ function BodyCard({ e }: { e: SoftwareEntity }) {
       style={{ marginBottom: 14 }}
       title={
         <Space size={8} wrap>
-          <HddOutlined style={{ color: 'var(--blue2)' }} />
+          <HddOutlined style={{ color: 'var(--accent-fg)' }} />
           <span>"本体"安装位置</span>
         </Space>
       }
@@ -491,7 +528,7 @@ function EntityDetail({ e, onBack, plans, planErr, theme, scan, onGotoMigration 
         <div style={{ flex: 1.1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 300 }}>
           <Card
             size="small"
-            title={<Space size={8}><PartitionOutlined style={{ color: 'var(--blue2)' }} />关联图谱</Space>}
+            title={<Space size={8}><PartitionOutlined style={{ color: 'var(--accent-fg)' }} />关联图谱</Space>}
             styles={{ body: { padding: 6 } }}
           >
             <EntityGraph entity={e} theme={theme} height={320} />
@@ -570,7 +607,7 @@ function PortableModal({ open, onClose, onConfirmed }: {
   };
   return (
     <Modal
-      title={<Space><ApiOutlined style={{ color: 'var(--blue2)' }} /> 便携软件发现</Space>}
+      title={<Space><ApiOutlined style={{ color: 'var(--accent-fg)' }} /> 便携软件发现</Space>}
       open={open}
       onCancel={onClose}
       width={760}

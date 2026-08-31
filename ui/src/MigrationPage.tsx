@@ -190,7 +190,7 @@ function PlanDetail({
           <Statistic
             title={<span style={{ fontSize: 11, color: 'var(--tx3)' }}>归因置信度</span>}
             value={`${Math.round(plan.confidence * 100)}%`}
-            valueStyle={{ fontSize: 22, fontWeight: 700, color: 'var(--blue2)' }}
+            valueStyle={{ fontSize: 22, fontWeight: 700, color: 'var(--accent-fg)' }}
           />
           <div>
             <div style={{ fontSize: 11, color: 'var(--tx3)' }}>所属</div>
@@ -733,7 +733,7 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
             title={<span style={{ fontSize: 11.5, color: 'var(--tx3)' }}>可执行条目</span>}
             value={s.executable}
             suffix={<span style={{ fontSize: 13, color: 'var(--tx3)' }}>/ {s.total_candidates} 处痕迹</span>}
-            valueStyle={{ fontSize: 27, fontWeight: 700, color: 'var(--blue2)' }}
+            valueStyle={{ fontSize: 27, fontWeight: 700, color: 'var(--accent-fg)' }}
           />
           {Object.entries(s.by_action).map(([act, v]) => (
             <div key={act}>

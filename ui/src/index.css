@@ -12,22 +12,55 @@
    "看得见但费劲"在这个工具里不是体验问题：看错路径会删错东西。 */
 :root,
 :root[data-theme='dark'] {
-  --bg: #0d1117;
-  --panel: #161b22;
-  --panel2: #1c2128;
-  --deep: #010409;
-  --line: #21262d;
-  --line2: #30363d;
-  --tx: #e6edf3;    /* 16.02 / 14.64 / 13.69 */
-  --tx2: #8b949e;   /*  6.15 /  5.62 /  5.26 */
-  --tx3: #8b949e;   /*  6.15 /  5.62 /  5.26 —— 原 #667089 只有 3.82，不过线 */
-  --blue: #2f81f7;
-  --blue2: #4493f8; /*  6.11 /  5.58 /  5.22 */
-  --cyan: #7adcf0;  /* 12.01 / 10.97 / 10.26 */
-  --red: #f85149;   /*  5.65 /  5.16 /  4.83 */
-  --green: #3fb950; /*  7.45 /  6.81 /  6.37 */
-  /* 警告色：调色板原先只有红/绿，"暂不可处理"既不是失败也不是通过，缺一档 */
-  --amber: #d29922; /*  7.50 /  6.85 /  6.41 */
+  --bg: #0b0f17;
+  --panel: #131822;
+  --panel2: #1a202c;
+  --deep: #070a10;
+  --line: rgba(255, 255, 255, 0.08);
+  --line2: rgba(255, 255, 255, 0.12);
+  /* 三个数依次是对 --bg / --panel / --panel2 的对比度。**改颜色必须重算这三个数**，
+     否则下一个人无从判断还有多少余量。深色下 --deep 比 --bg 更暗，落在它上面只会更好，
+     所以不单列——但浅色相反，见下面浅色段的说明。 */
+  --tx: #f0f6fc;    /* 17.62 / 16.33 / 14.99 */
+  --tx2: #94a3b8;   /*  7.48 /  6.93 /  6.36 */
+  --tx3: #94a3b8;   /*  7.48 /  6.93 /  6.36 */
+  /* --blue 对 --panel2 只有 4.44，不过线：它在深色下**只作背景与边框**
+     （.lp-card-accent 左边框、.lp-offender-item::before），不要拿它当文字色。
+     需要蓝色文字时用 --blue2。 */
+  --blue: #3b82f6;  /*  5.21 /  4.83 /  4.44 —— 仅背景/边框用 */
+  --blue2: #60a5fa; /*  7.54 /  6.99 /  6.42 */
+  --cyan: #38bdf8;  /*  8.95 /  8.30 /  7.62 */
+  --red: #f87171;   /*  6.93 /  6.43 /  5.90 */
+  --green: #4ade80; /* 11.01 / 10.20 /  9.36 */
+  --amber: #fbbf24; /* 11.49 / 10.65 /  9.78 */
+
+  /* 软件首字母回退磁贴：色相由名字哈希算出（见 SoftwarePage 的 getTileHue），
+     但**亮度不能跟着色相走**——hsl 同一亮度在不同色相下感知亮度差一倍，
+     蓝紫系（h≈240）会暗到看不见。所以这里按主题钉死亮度，JS 只给色相。
+     扫过全部 360 个色相：74% 是刚好够的下限（最差 5.19），70% 就有色相掉到 4.27。
+     取 76% 是留一档余量。test_ui_contrast.py 会重跑这个扫描。 */
+  --tile-fg-l: 76%;
+  --tile-fg-s: 70%;
+
+  /* 深色侧栏底是 --deep #070a10，比 --panel 更暗，--blue2 压上去 6.79，够用 */
+  --nav-active-fg: var(--blue2);
+
+  /* 蓝色**文字**统一走这个令牌，别直接用 --blue / --blue2：
+     深色下 --blue2 在 panel2 上 6.42 没问题，但浅色下 --blue2 只有 2.90、
+     --blue 也只有 4.45（差 0.05 过线）。分成一个令牌后，"哪个蓝能当字"
+     这件事只需要在这里判断一次。 */
+  --accent-fg: var(--blue2); /* 深色：对 bg/panel/panel2 = 7.54 / 6.99 / 6.42 */
+  /* 同色淡底徽标（回收站体积那种）：字压在自己 15% 的底上，比压纯底更难过线 */
+  --danger-fg: var(--red);   /* 深色：对侧栏徽标复合底 6.02 */
+
+  /* ---- 质感、微发光与阴影 (Elevation Tokens) ---- */
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 16px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  /* 发光那一层从 --blue 现算，不写死 rgba：写死的话换调色板时这里会悄悄跟主色脱节 */
+  --shadow-card-hover: 0 8px 24px rgba(0, 0, 0, 0.6),
+    0 0 12px color-mix(in srgb, var(--blue) 15%, transparent);
+  --inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --inset-card-glow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 /* --tx2 与 --tx3 在深色下取了同一个值，这是**刻意的**而非漏改：深色背景上
@@ -44,17 +77,51 @@
   --line2: #c9d1d9;
   --tx: #1f2328;    /* 14.84 / 15.80 / 13.50 */
   --tx2: #57606a;   /*  6.00 /  6.39 /  5.46 */
-  --tx3: #656d76;   /*  4.93 /  5.25 /  4.50 —— 原 #8c959f 只有 3.04，不过线 */
-  --blue: #0969da;  /*  4.88 /  5.19 /  4.45 */
-  --blue2: #218bff;
+  /* #656d76 对 --panel2 是 4.4999——差 0.0001，而写下来四舍五入成"4.50"看着像过了。
+     这种"标注里躺着一个不过线的数、但没人把它当失败"的情况，是 test_ui_contrast.py
+     存在的直接原因：数字记在注释里不等于有人在校验它。 */
+  --tx3: #5b636c;   /*  5.72 /  6.09 /  5.23 */
+  --blue: #0969da;  /*  4.88 /  5.19 /  4.45 —— 对 panel2 差 0.05 不过线 */
+  /* --blue2 在浅色下**不承载任何文字**，对 bg/panel/panel2/deep 依次是
+     3.18 / 3.39 / 2.90 / 2.65，连大文本的 3.0 门槛都只在前两种底上过。
+     它唯一的身份是 antd 的 colorInfo / colorPrimaryHover 种子（那两个位置不放文本）。
+     需要蓝色文字时用 --accent-fg——test_ui_contrast.py 里有一条会拦住
+     `color: var(--blue2)` 重新出现。 */
+  --blue2: #218bff; /*  3.18 /  3.39 /  2.90 —— 不作前景，仅 antd 令牌种子 */
   /* --cyan 原是 #0e7a8d，对 --panel2 只有 4.30。之前没发现是因为只在白底与
      --bg 上验过（4.71 / 5.02 都过），而它实际会落在更暗的底上——表格行悬停
      底色就是 --panel2 那一档。收到 #0b6b7a 后五种浅色背景最低 5.30。
      **教训：验对比度不能只挑最亮那个底，要按元素实际会落在哪些底上算。** */
   --cyan: #0b6b7a;  /*  5.80 /  6.18 /  5.30 */
   --red: #cf222e;   /*  5.03 /  5.36 /  4.59 */
-  --green: #1a7f37; /*  4.77 /  5.08 /  4.36 */
-  --amber: #9a6700; /*  4.57 /  4.87 /  4.17 */
+  /* 原值 #1a7f37 / #9a6700 对 --panel2 分别是 4.36 / 4.17，同样是标注里记着却没人校验。
+     --panel2 是卡片内层小盒、表格行悬停底那一档，绿/琥珀正好会出现在那里（状态点、
+     "可清理"体积）。压深一档后三种底全过。 */
+  --green: #176f30; /*  5.88 /  6.26 /  5.37 */
+  --amber: #8a5a00; /*  5.57 /  5.93 /  5.08 */
+
+  /* 浅色下 --deep #dfe4ea 比 --bg 更**亮**，是第四种底，上面那三个数不覆盖它。
+     侧栏用的就是 --deep：--blue 压在它上面只有 4.06，即使把蓝色叠底的 alpha
+     降到 0 也过不了线；--tx3 压上去是 4.10。所以侧栏上的文字另取更深的值，
+     见 --nav-active-fg 与 .lp-brand-sub。
+     **教训（第二次）：新增一种背景色，就得把所有会落在它上面的前景重算一遍。** */
+  --nav-active-fg: #0550ae; /* 对侧栏激活态底 5.24 */
+  --accent-fg: #0550ae;     /* 对 panel2 / panel = 6.51 / 7.59 */
+  /* --red 压在自己 15% 的淡底上只有 3.35（浅色侧栏底本身就亮，淡红底又把它拉近）。
+     取更深一档：对徽标复合底 4.92，对 bg/panel/panel2 是 7.39 / 7.87 / 6.75。 */
+  --danger-fg: #a40e26;
+
+  /* 浅色磁贴：亮度要往**暗**走才够对比。24% 是 360 色相扫描的上限（最差 4.89），
+     28% 就有色相掉到 3.84。 */
+  --tile-fg-l: 22%;
+  --tile-fg-s: 65%;
+
+  /* ---- 质感、微发光与阴影 (Elevation Tokens) ---- */
+  --shadow-sm: 0 1px 2px rgba(31, 35, 40, 0.06);
+  --shadow-card: 0 1px 3px rgba(31, 35, 40, 0.08), 0 1px 2px rgba(31, 35, 40, 0.04);
+  --shadow-card-hover: 0 4px 12px rgba(31, 35, 40, 0.12), 0 1px 3px rgba(31, 35, 40, 0.06);
+  --inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  --inset-card-glow: inset 0 0 0 1px rgba(0, 0, 0, 0.02);
 }
 
 body {
@@ -62,7 +129,60 @@ body {
   overflow: hidden;
 }
 
+/* 科技感发光扫描按钮 */
+/* 渐变的三个色标刻意写死而不用 --blue/--blue2：白字压在渐变上要逐个色标验对比度
+   （这里 #1f6feb 是 4.71、#1158c7 是 6.53，最亮的 #2f81f7 是 3.75——所以**最亮那一档
+   不能出现在渐变里**，否则白字在那一段掉线）。若改成令牌，换调色板时会静默破功。 */
+.lp-scan-btn {
+  background: linear-gradient(135deg, #1f6feb 0%, #1a63d8 50%, #1158c7 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.2) !important;
+  color: #fff !important;
+  font-weight: 600 !important;
+  box-shadow: 0 0 16px rgba(47, 129, 247, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  transition: all var(--dur-base) var(--ease-out) !important;
+  position: relative;
+  overflow: hidden;
+}
+.lp-scan-btn:hover {
+  /* 悬停不能靠"变亮"来表达：白字压上去就掉线（#2f7ff0 只有 3.88）。
+     这里改成整体略深 + 发光更强，亮度反差交给 box-shadow 承担。 */
+  background: linear-gradient(135deg, #2268de 0%, #1a5fc8 50%, #0f4fae 100%) !important;
+  box-shadow: 0 0 24px rgba(68, 147, 248, 0.65), inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+  transform: translateY(-1px);
+}
+.lp-scan-btn:active {
+  transform: translateY(0);
+}
+:root[data-theme='light'] .lp-scan-btn {
+  background: linear-gradient(135deg, #0969da 0%, #0550ae 100%) !important;
+  box-shadow: 0 2px 10px rgba(9, 105, 218, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.4) !important;
+}
+
 /* 卡片风格分层：不再千篇一律 */
+.lp-card-elevated {
+  background: var(--panel) !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow-card), var(--inset-highlight), var(--inset-card-glow) !important;
+  border-radius: var(--radius-lg) !important;
+  transition: box-shadow var(--dur-base) var(--ease-out), border-color var(--dur-base) var(--ease-out) !important;
+  position: relative;
+}
+.lp-card-elevated::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 15%;
+  right: 15%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  pointer-events: none;
+}
+:root[data-theme='light'] .lp-card-elevated::before {
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.04), transparent);
+}
+.lp-card-elevated:hover {
+  box-shadow: var(--shadow-card-hover), var(--inset-highlight), var(--inset-card-glow) !important;
+}
 .lp-card-accent {
   border-left: 3px solid var(--blue) !important;
 }
@@ -106,11 +226,53 @@ body {
 }
 /* 侧栏导航项与主题/设置按钮共用。它们本来就是 <button>，这里只补焦点环与过渡。 */
 .lp-nav {
-  transition: background var(--dur-fast) var(--ease-out),
-    color var(--dur-fast) var(--ease-out);
+  position: relative;
+  transition: all var(--dur-fast) var(--ease-out);
 }
 .lp-nav:hover {
-  background: rgba(127, 145, 180, 0.14);
+  background: rgba(127, 145, 180, 0.12) !important;
+  color: var(--tx) !important;
+}
+/* 选择器写成 .lp-nav.lp-nav-active 而不是 .lp-nav-active，是为了压过上面的
+   .lp-nav:hover——两者都带 !important 时比的是特异度，(0,1,0) 会输给 (0,2,0)，
+   结果"悬停在当前页上"会把蓝色激活态刷成普通白字，看着像点掉了。
+   font-weight 也必须带 !important：这些按钮身上有内联的 font: inherit，
+   内联样式压过普通类规则，不加 !important 这行等于没写。 */
+.lp-nav.lp-nav-active,
+.lp-nav.lp-nav-active:hover {
+  background: rgba(47, 129, 247, 0.14) !important;
+  color: var(--nav-active-fg) !important;
+  font-weight: 600 !important;
+  box-shadow: inset 0 0 0 1px rgba(47, 129, 247, 0.28), var(--shadow-sm);
+}
+.lp-nav-active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background: var(--nav-active-fg);
+  box-shadow: 0 0 8px rgba(68, 147, 248, 0.6);
+}
+:root[data-theme='light'] .lp-nav.lp-nav-active,
+:root[data-theme='light'] .lp-nav.lp-nav-active:hover {
+  background: rgba(9, 105, 218, 0.1) !important;
+  box-shadow: inset 0 0 0 1px rgba(9, 105, 218, 0.2), var(--shadow-sm);
+}
+:root[data-theme='light'] .lp-nav-active::before {
+  box-shadow: 0 0 6px rgba(9, 105, 218, 0.4);
+}
+/* 侧栏是全应用唯一以 --deep 为底的面，而浅色下 --deep #dfe4ea 比 --bg 更**亮**，
+   是调色板那三个标注数不覆盖的第四种底。把 tx3/green/amber 在基础调色板里压深
+   一档后，它们在 --deep 上也过了（4.77 / 4.90 / 4.64），只剩 --red 差一点（4.19）。
+
+   在容器上重绑令牌而不是去改每一处用它的元素：侧栏里现在有回收站体积徽标用 --red，
+   以后还会加别的东西，覆盖令牌能让新增的自动拿到安全值。
+   深色下 --deep 比 --bg 更暗，原值只会更好，不需要这一层。 */
+:root[data-theme='light'] .lp-sidebar {
+  --red: #c0121b; /* 对 --deep 4.91；基础值 #cf222e 只有 4.19 */
 }
 
 html,
@@ -284,3 +446,110 @@ body,
 .lp-num {
   font-variant-numeric: tabular-nums;
 }
+
+/* ---- antd Tag preset 的对比度修正 ----
+   antd 的 preset Tag 是「6 号饱和字压 1 号极浅底」，这个搭配在几个色相上不过 AA：
+
+     浅色   cyan 3.39   orange 3.34   gold 2.76
+     深色   purple 3.39   geekblue 4.16
+
+   这些 Tag 承载的是**分类与动作**（"junction"、"改环境变量"、"容器"、"未归因"），
+   看错一个就可能对错误的目录执行操作，不是装饰性文字。
+
+   改字不改底：底色是 Tag 的识别特征（一眼看出是哪类），压深/提亮文字不影响辨认。
+   取值优先用 antd 自己调色板的相邻档（cyan-7、orange-7、gold-8……），这样和其余
+   Tag 仍是同一套设计语言；只有 gold 例外——它的 7 号档 #ad6800 仍只有 4.25，
+   得跳到 8 号。
+
+   选择器带 :root[data-theme=...] 前缀是为了压过 antd 生成的 `.css-<hash>.ant-tag-x`
+   （那是 (0,2,0)，这里是 (0,3,0)），不必上 !important。 */
+:root[data-theme='light'] .ant-tag-cyan {
+  color: #006d75; /* antd cyan-7，对 #e6fffb 5.82（原 #08979c 是 3.39） */
+}
+:root[data-theme='light'] .ant-tag-orange {
+  color: #ad4e00; /* antd orange-7，对 #fff7e6 5.09（原 #d46b08 是 3.34） */
+}
+:root[data-theme='light'] .ant-tag-gold {
+  color: #874d00; /* antd gold-8，对 #fffbe6 6.53（7 号档 4.25 仍不过） */
+}
+/* green 承载的是 CAT_COLOR 里的「可清理」「可再生缓存」——用户就靠这两个标签
+   判断什么能删，它比其余 Tag 更不能含糊。
+   （这一条是靠 test_every_preset_used_in_code_is_covered_by_the_table 发现的：
+   我在浏览器里逐个量 Tag 时，当前页面恰好没渲染绿色标签，于是漏掉了它。） */
+:root[data-theme='light'] .ant-tag-green {
+  color: #237804; /* antd green-7，对 #f6ffed 5.44（原 #389e0d 是 3.37） */
+}
+:root[data-theme='dark'] .ant-tag-purple {
+  color: #b37feb; /* 对 #1a1325 6.15（原 #854eca 是 3.39） */
+}
+:root[data-theme='dark'] .ant-tag-geekblue {
+  color: #85a5ff; /* 对 #131629 7.51（原 #5273e0 是 4.16） */
+}
+
+/* antd 的 ghost primary 按钮把文字色从 colorPrimary 推暗了一档（深色下推成
+   #2b71d5，压在 --panel 上只有 3.75）。ghost 的边框本身已经把按钮圈出来了，
+   文字不需要再暗一档，这里拉回 --accent-fg。 */
+.ant-btn-background-ghost.ant-btn-primary:not(:disabled) {
+  color: var(--accent-fg) !important;
+  border-color: var(--accent-fg) !important;
+}
+
+/* ---- 仪表盘与卡片精致排版类 ---- */
+.lp-stat-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  border: 1px solid var(--line);
+  background: var(--panel2);
+}
+
+.lp-offender-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  /* 底用 --bg 而不是 --panel2：行里那条灰色路径是 --tx3，压在 --panel2 上浅色下是
+     4.4999——**恰好差 0.0001 不过线**，而调色板里标注的"4.50"是四舍五入后的样子，
+     看着像过了。换到 --bg 是 4.93。
+     顺带：--bg 比卡片的 --panel 更暗，行会比卡片"凹"下去，这也是原本的视觉意图。 */
+  background: var(--bg);
+  border: 1px solid var(--line);
+  margin-bottom: 8px;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.lp-offender-item:hover {
+  background: rgba(127, 145, 180, 0.12);
+  border-color: var(--blue2);
+  box-shadow: var(--shadow-sm);
+}
+.lp-offender-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--blue);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+.lp-offender-item:hover::before {
+  opacity: 1;
+}
+.lp-offender-item:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
