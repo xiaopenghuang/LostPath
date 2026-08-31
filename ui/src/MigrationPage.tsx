@@ -5,9 +5,10 @@ import {
 import { WarningOutlined } from '@ant-design/icons';
 import {
   ACTION_LABEL, BLOCKER_LABEL, checkTargetRoot, DriveInfo, executePlan, fetchDrives,
-  fetchOperations, fetchPlan, fetchTargetRoot, fmtSize,
-  Operation, OperationsReport, OP_STATUS_LABEL, Plan, PlanReport, rollbackOperation,
-  saveTargetRoot, TargetRootCheck, TargetRootInfo,
+  fetchOperations, fetchPlan, fetchTargetRoot, fetchTargetRootOverrides, fmtSize,
+  Operation, OperationsReport, OP_STATUS_LABEL, OverrideEntry, Plan, PlanReport,
+  rollbackOperation, saveTargetRoot, setTargetRootOverride,
+  TargetRootCheck, TargetRootInfo,
 } from './api';
 
 const ACTION_COLOR: Record<string, string> = {
@@ -115,10 +116,15 @@ function PlanDetail({
   plan,
   onExecute,
   busy,
+  onChangeTarget,
+  overriddenRoot,
 }: {
   plan: Plan;
   onExecute: (p: Plan) => void;
   busy: boolean;
+  onChangeTarget?: (p: Plan) => void;
+  /** 这一项已单独设过的根；没设过为 null。只用于把按钮文案说准。 */
+  overriddenRoot?: string | null;
 }) {
   const mech = plan.redirect_mechanism;
   return (
@@ -236,6 +242,18 @@ function PlanDetail({
         <Button type="primary" block loading={busy} onClick={() => onExecute(plan)}>
           执行此计划
         </Button>
+        {/* 只对会产生目标位置的动作给这个入口。cleanup 是直接删（进回收区），
+            没有"搬到哪"可言，给了按钮只会让人以为它也能改位置。 */}
+        {onChangeTarget && (plan.action === 'redirect' || plan.action === 'junction') && (
+          <Button
+            block
+            size="small"
+            style={{ marginTop: 8 }}
+            onClick={() => onChangeTarget(plan)}
+          >
+            {overriddenRoot ? '改目标位置（已单独设置）' : '只改这一项的目标位置'}
+          </Button>
+        )}
         <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 8, textAlign: 'center' }}>
           点击后会先让你确认，删除的数据进回收区、30 天内可撤销
         </div>
@@ -280,15 +298,29 @@ function Issue({ tone, text }: { tone: 'error' | 'warn'; text: string }) {
  * 而且规则必须落在服务端才拦得住直接打 HTTP 的调用方（见 engine/main.py 的
  * _validated_target_root），前端再实现一遍只会让两份规则各自漂移。
  */
+/**
+ * 逐项覆盖时要知道改的是哪一条、以及它当前有没有专属位置。
+ *
+ * `saved` 传的是这一条已存的根（没设过就是 null），用来决定"改回全局位置"那个
+ * 按钮能不能按 —— 判据与全局模式一致：看**有没有存过东西**，不看当前是否走全局。
+ */
+type OverrideScope = { source: string; label: string; saved: string | null };
+
 function TargetRootModal({
-  info, onClose, onSaved,
+  info, onClose, onSaved, scope,
 }: {
   info: TargetRootInfo;
   onClose: () => void;
   onSaved: () => void;
+  /** 传了就是"只改这一条"，不传是改全局。两种模式共用同一套校验与输入控件。 */
+  scope?: OverrideScope;
 }) {
   const { message, modal } = App.useApp();
-  const [text, setText] = useState(info.saved ?? info.effective);
+  // 逐项模式下先显示这一条已存的根，没设过就拿全局的当起点 —— 用户多数是想在
+  // 全局位置的基础上挪一挪，而不是从空白开始打字。
+  const [text, setText] = useState(
+    scope ? (scope.saved ?? info.effective) : (info.saved ?? info.effective),
+  );
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [check, setCheck] = useState<TargetRootCheck | null>(null);
   const [checking, setChecking] = useState(false);
@@ -322,6 +354,21 @@ function TargetRootModal({
   const doSave = async (path: string | null) => {
     setSaving(true);
     try {
+      if (scope) {
+        const res = await setTargetRootOverride(scope.source, path);
+        if (res.ok) {
+          // 提示里报**后端算出的完整目标**，不是用户填的根。界面自己拼镜像后缀
+          // 就等于把 planner 的规则复制过来，两份实现必然漂移，症状是"提示里说搬到
+          // 这儿、实际搬到别处"而两边都看起来对。
+          message.success(path
+            ? `这一项将搬到 ${res.target ?? res.normalized}`
+            : '已改回全局位置');
+          onSaved();
+        } else {
+          message.error(res.errors?.[0]?.message ?? res.error ?? '保存失败');
+        }
+        return;
+      }
       const res = await saveTargetRoot(path);
       if (res.ok) {
         message.success(path ? `目标位置已改为 ${res.normalized}` : '已恢复为自动选择');
@@ -355,7 +402,7 @@ function TargetRootModal({
   return (
     <Modal
       open
-      title="迁移目标位置"
+      title={scope ? `只改这一项：${scope.label}` : '迁移目标位置'}
       onCancel={onClose}
       width={580}
       footer={[
@@ -367,9 +414,9 @@ function TargetRootModal({
           // （盘拔了），后端的 source 会是 auto——用 source 判就把这个按钮禁掉了，
           // 而那时用户恰恰最需要它：不清掉那个坏值，那条黄色警告会一直挂着，
           // 他只能改成另一个合法路径，没法回到"就用自动挑的"。
-          disabled={!info.saved}
+          disabled={scope ? !scope.saved : !info.saved}
         >
-          恢复自动选择
+          {scope ? '改回全局位置' : '恢复自动选择'}
         </Button>,
         <Button key="cancel" onClick={onClose}>取消</Button>,
         <Button
@@ -386,8 +433,22 @@ function TargetRootModal({
       ]}
     >
       <div style={{ fontSize: 12.5, color: 'var(--tx2)', lineHeight: 1.6, marginBottom: 16 }}>
-        重定向类操作会把环境变量指到这里，搬迁类操作会把数据复制到这里。每个软件在它
-        下面各占一个子目录，不会混在一起。
+        {scope ? (
+          <>
+            只有这一项会用下面这个位置，其余项仍按全局设置。填的是<b>根目录</b>——
+            原来的目录层级会照原样接在它后面，所以新位置一眼能看出东西本来在哪。
+            <div style={{ marginTop: 6, color: 'var(--tx3)', fontSize: 11.5 }}>
+              例：根填 <code className="lp-mono">G:\1</code>，而这一项在{' '}
+              <code className="lp-mono">C:\Users\你\AppData\Local\某目录</code>，
+              就会搬到 <code className="lp-mono">G:\1\AppData\Local\某目录</code>。
+            </div>
+          </>
+        ) : (
+          <>
+            重定向类操作会把环境变量指到这里，搬迁类操作会把数据复制到这里。原来的
+            目录层级会照原样接在它后面，各软件不会混在一起。
+          </>
+        )}
       </div>
 
       <div style={{ marginBottom: 14 }}>
@@ -445,12 +506,19 @@ function TargetRootModal({
           }}
         >
           <div style={{ fontSize: 11, color: 'var(--tx3)', marginBottom: 3 }}>
-            各软件会落在
+            各项会落在
           </div>
+          {/* 不再写 `<根>\<软件名>`：目标叶子早已改成**按源路径镜像**，写软件名是
+              在骗用户。而且这里刻意只给形状不给具体路径——真实路径由后端算
+              （planner.mirror_suffix），前端拼一遍必然与后端漂移。 */}
           <code className="lp-mono" style={{ fontSize: 11.5, color: 'var(--cyan)',
             wordBreak: 'break-all' }}>
-            {check.normalized}\&lt;软件名&gt;
+            {check.normalized}\&lt;原来的目录层级&gt;
           </code>
+          <div style={{ fontSize: 11, color: 'var(--tx3)', marginTop: 5 }}>
+            例：<code className="lp-mono">…\AppData\Local\某目录</code> 会落到{' '}
+            <code className="lp-mono">{check.normalized}\AppData\Local\某目录</code>
+          </div>
         </div>
       )}
 
@@ -473,6 +541,9 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
   const [busy, setBusy] = useState(false);
   const [targetInfo, setTargetInfo] = useState<TargetRootInfo | null>(null);
   const [targetOpen, setTargetOpen] = useState(false);
+  const [overrides, setOverrides] = useState<OverrideEntry[]>([]);
+  // 非 null 时弹窗处于"只改这一项"模式
+  const [scope, setScope] = useState<OverrideScope | null>(null);
 
   const reload = useCallback(() => {
     fetchPlan()
@@ -482,7 +553,15 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
     // 目标位置单独取而不是从 plan 里读：plan 只给出**这份计划用了哪个根**，
     // 说不出它是自动挑的还是用户设的、也说不出用户设的那个是否已经失效。
     fetchTargetRoot().then(setTargetInfo).catch(() => undefined);
+    fetchTargetRootOverrides().then(setOverrides).catch(() => undefined);
   }, []);
+
+  /** 这个源路径有没有单独设过根。键在后端存的是小写，这里比较也要转。 */
+  const overrideOf = useCallback(
+    (path: string) =>
+      overrides.find((o) => o.source === path.toLowerCase()) ?? null,
+    [overrides],
+  );
 
   useEffect(reload, [reload]);
 
@@ -680,7 +759,8 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
             {targetInfo && (
               <Button
                 size="small"
-                onClick={() => setTargetOpen(true)}
+                // 显式清 scope：这个入口改的是全局，不能带着上一次逐项的 scope 进去
+                onClick={() => { setScope(null); setTargetOpen(true); }}
                 style={{ fontSize: 11.5, height: 22, padding: '0 9px' }}
               >
                 更改
@@ -718,7 +798,12 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
               </span>
             }
             action={
-              <Button size="small" onClick={() => setTargetOpen(true)}>重新设置</Button>
+              <Button
+                size="small"
+                onClick={() => { setScope(null); setTargetOpen(true); }}
+              >
+                重新设置
+              </Button>
             }
           />
         )}
@@ -786,7 +871,20 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
             })}
           </Card>
           {current && (
-            <PlanDetail plan={current} onExecute={confirmExecute} busy={busy} />
+            <PlanDetail
+              plan={current}
+              onExecute={confirmExecute}
+              busy={busy}
+              overriddenRoot={overrideOf(current.path)?.root ?? null}
+              onChangeTarget={(p) => {
+                setScope({
+                  source: p.path,
+                  label: p.name ?? baseName(p.path),
+                  saved: overrideOf(p.path)?.root ?? null,
+                });
+                setTargetOpen(true);
+              }}
+            />
           )}
         </div>
       )}
@@ -799,8 +897,11 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
       {targetOpen && targetInfo && (
         <TargetRootModal
           info={targetInfo}
-          onClose={() => setTargetOpen(false)}
-          onSaved={() => { setTargetOpen(false); reload(); }}
+          scope={scope ?? undefined}
+          // scope 必须跟着弹窗一起清掉。留着的话下次点全局那个"更改"按钮会
+          // 带着上一次的 scope 进来，于是用户以为在改全局、实际只改了某一项。
+          onClose={() => { setTargetOpen(false); setScope(null); }}
+          onSaved={() => { setTargetOpen(false); setScope(null); reload(); }}
         />
       )}
     </div>
