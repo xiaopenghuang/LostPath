@@ -11,8 +11,10 @@ import { Scan, useScan } from './useScan';
  */
 function ScanButtons({
   scan,
+  systemDrive,
 }: {
   scan: Scan;
+  systemDrive: string;
 }) {
   const { status, starting, busy, begin, askCancel } = scan;
   return (
@@ -22,7 +24,7 @@ function ScanButtons({
           {status?.cancel_requested ? '正在取消…' : '取消'}
         </Button>
       )}
-      <Tooltip title={busy ? '扫描进行中' : '递归扫描 C 盘并重新归因，全程只读，覆盖前自动归档上一份快照'}>
+      <Tooltip title={busy ? '扫描进行中' : `递归扫描 ${systemDrive} 盘并重新归因，全程只读，覆盖前自动归档上一份快照`}>
         <Button
           type="primary"
           size="large"
@@ -261,7 +263,8 @@ export default function DashboardPage({
     .sort((a, b) => (b.traces_size ?? 0) - (a.traces_size ?? 0))
     .slice(0, 6);
 
-  const cDrive = drives.find((d) => d.letter === 'C:');
+  const systemDrive = data.system_drive ?? 'C:';
+  const cDrive = drives.find((d) => d.letter.toUpperCase() === systemDrive.toUpperCase());
   const cSegments = cDrive
     ? [
         { label: '其他已用', color: 'var(--seg-other)', size: cDrive.total - cDrive.free - s.total_size },
@@ -294,11 +297,11 @@ export default function DashboardPage({
               "上次扫描 X"，两者可以同时显示"就绪"和一个几天前的时间。
               在一个会删文件的工具里，让状态指示器说谎比没有状态指示器更糟。 */}
           <div style={{ color: 'var(--tx2)', fontSize: 'var(--fs-sm)', marginTop: 4 }}>
-            台账实时 · C 盘足迹来自本机扫描快照
+            台账实时 · {systemDrive} 盘足迹来自本机扫描快照
             {scannedAt && ` · 上次扫描 ${scannedAt}`}
           </div>
         </div>
-        <ScanButtons scan={scan} />
+        <ScanButtons scan={scan} systemDrive={systemDrive} />
       </div>
 
       <ScanPanels scan={scan} elevated={elevated} />
@@ -385,7 +388,7 @@ export default function DashboardPage({
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             {drives.map((d) =>
-              d.letter === 'C:' && cDrive ? (
+              d.letter.toUpperCase() === systemDrive.toUpperCase() && cDrive ? (
                 <SegmentedDriveBar key={d.letter} drive={d} segments={cSegments} />
               ) : (
                 <SegmentedDriveBar
@@ -404,10 +407,10 @@ export default function DashboardPage({
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 12 }}>
           <div>
             <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)' }}>
-              占用大户 · C 盘痕迹 Top 6
+              占用大户 · {systemDrive} 盘痕迹 Top 6
             </span>
             <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx3)', marginLeft: 8 }}>
-              优先清理或迁移这些应用可最快释放 C 盘
+              优先清理或迁移这些应用可最快释放 {systemDrive} 盘空间
             </span>
           </div>
           <Button type="link" size="small" style={{ marginLeft: 'auto' }} onClick={() => onGoto('software')}>

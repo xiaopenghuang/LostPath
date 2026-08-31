@@ -140,7 +140,7 @@ def test_copy_failure_leaves_source_untouched(tmp_path, monkeypatch):
 
     def boom(*a, **kw):
         raise OSError("磁盘忙")
-    monkeypatch.setattr(executor.shutil, "copytree", boom)
+    monkeypatch.setattr(executor.fsdedup, "copytree_keep_links", boom)
 
     with pytest.raises(executor.ExecutionFailed):
         executor.execute_junction(rec(src, "AppProfile"),

@@ -231,10 +231,14 @@ def _dir_stats(path: str) -> tuple[int, int]:
     """(文件数, 字节数)。用于复制前后比对，确认搬运没缺斤少两。"""
     files = total = 0
     for root, dirs, names in os.walk(path):
-        # 不跟进重解析点，否则会把链接目标的内容重复计入
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        # 不跟进重解析点，否则会把链接目标的内容重复计入。Windows junction
+        # 不是 os.path.islink()，必须同时检查 reparse tag。
+        dirs[:] = [d for d in dirs
+                   if not _is_junction(os.path.join(root, d))]
         for n in names:
             p = os.path.join(root, n)
+            if _is_junction(p):
+                continue
             try:
                 total += os.path.getsize(p)
                 files += 1
@@ -247,6 +251,8 @@ def _dir_stats(path: str) -> tuple[int, int]:
 def _is_junction(path: str) -> bool:
     """判断是否 junction / 符号链接。os.path.islink 在 Windows 上对 junction 返回
     False，必须看 reparse tag。"""
+    if os.path.islink(path):
+        return True
     try:
         st = os.lstat(path)
     except OSError:
@@ -313,9 +319,10 @@ def execute_junction(record: dict, target_root: str | None = None,
     op["recycle_intent"] = _recycle_dst(src, op)
     manifest.save(op)                            # 先落盘，再动文件
     try:
-        # 1. 复制到新盘。symlinks=True：源里若有链接，保持是链接而不是把目标复制一份
+        # 1. 复制到新盘。按 inode 重建硬链接，重解析点不跟进，避免把共享内容拆开
+        # 或把链接目标整棵复制进来。
         Path(target).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(src, target, symlinks=True, dirs_exist_ok=True)
+        fsdedup.copytree_keep_links(src, target)
         manifest.add_step(op, f"copied_to:{target}")
 
         # 2. 比对。不一致就地中止——此时源目录还没动过
@@ -379,7 +386,9 @@ def rollback(op_id: str) -> dict:
             f"该操作的数据已于 {op['purged_at']} 永久删除，无法还原")
 
     src = op.get("source_path")
-    dst = op.get("recycled_to")
+    # recycle_intent 在移动前就已落盘。进程若恰好在移动完成、写回 recycled_to
+    # 之前崩溃，恢复仍必须按这个意图寻找回收区里的数据。
+    dst = op.get("recycled_to") or op.get("recycle_intent")
 
     # 0. junction 操作要先摘掉链接，再谈还原。
     #    不摘的话 os.path.exists(src) 为真（它指向新盘那份），下面会误判成"原路径已
@@ -436,6 +445,7 @@ def rollback(op_id: str) -> dict:
             leftover = target
             manifest.add_step(op, f"target_copy_kept:{target}")
 
+    # 保留 recycle_intent 作为审计信息；落点不存在时 recycle_entries 会自然忽略它。
     manifest.mark(op, "rolled_back", recycled_to=None)
     if leftover:
         op["leftover_copy"] = leftover

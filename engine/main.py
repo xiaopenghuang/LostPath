@@ -7,6 +7,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import uvicorn
 from fastapi import FastAPI
@@ -25,6 +26,7 @@ import inventory  # noqa: E402
 from lostpath.act import executor, manifest, planner  # noqa: E402
 from lostpath.act import target_root as target_root_mod  # noqa: E402
 from lostpath.scan import runner  # noqa: E402
+from lostpath import sysdirs  # noqa: E402
 from lostpath.storage import paths as lp_paths, snapshots  # noqa: E402
 
 UI_DIST = ROOT / "ui" / "dist"
@@ -44,7 +46,8 @@ def build_data() -> dict:
                                  -(x.get("estimated_size") or 0),
                                  x["name"].lower()))
     return {
-        "built_from": "软件台账（注册表+Appx+便携）× C 盘痕迹快照",
+        "built_from": "软件台账（注册表+Appx+便携）× 系统盘痕迹快照",
+        "system_drive": sysdirs.system_drive(),
         "items": trace_items,      # C 盘全景页数据源（不变）
         "software": entities,      # 台账实体（含已挂接 traces）
         "unlinked_traces": unlinked,
@@ -108,6 +111,26 @@ def _auto_purge_expired() -> None:
 DATA = build_data()
 _auto_purge_expired()
 app = FastAPI(title="LostPath M2")
+
+
+@app.middleware("http")
+async def reject_cross_origin_requests(request, call_next):
+    """Reject browser requests whose Origin is not the local application.
+
+    Requests from the Electron ``file://`` page and non-browser local clients do
+    not carry a useful Origin header, so those remain supported. A loopback
+    Origin is sufficient for the embedded UI and the Vite development server;
+    arbitrary websites must not be able to trigger a write endpoint by CSRF.
+    """
+    origin = request.headers.get("origin")
+    if origin and origin.lower() != "null":
+        parsed = urlparse(origin)
+        if parsed.scheme not in ("http", "https") or parsed.hostname not in {
+            "127.0.0.1", "localhost", "::1",
+        }:
+            return JSONResponse(
+                {"detail": "只允许来自本机 LostPath 界面的请求"}, status_code=403)
+    return await call_next(request)
 
 # 图标目录：后台线程补齐缺失图标（PowerShell ExtractAssociatedIcon，不阻塞启动）
 lp_paths.ensure_dirs()
@@ -179,10 +202,10 @@ def api_data():
 # 这三个端点是 P2：在此之前引擎只会读快照，而快照只能靠手工跑脚本产出，别人装上
 # 后痕迹永远是空的。扫描全程只读，唯一写动作是最后原子写快照，且覆盖前先归档留底。
 #
-# 无鉴权说明：服务只绑 127.0.0.1，且扫描根不接受入参、由 sysdirs 从环境变量取出并
-# 用 [A-Za-z]: 严格校验（UNC 进不来），没有路径注入面。
-# 与既有 /api/portable/confirm 同级别。若哪天要监听非回环地址，这几个会写盘的
-# 端点必须先加鉴权。
+# 服务仍只绑 127.0.0.1，扫描根不接受入参、由 sysdirs 从环境变量取出并用
+# [A-Za-z]: 严格校验（UNC 进不来），没有路径注入面。中间件还会拒绝非回环 Origin，
+# 防止外部网页借浏览器会话触发写端点。无 Origin 的本地 CLI 仍可调用；若以后监听
+# 非回环地址，必须再加真正的请求令牌鉴权。
 
 
 def _rebuild_after_scan(job) -> None:
@@ -324,7 +347,7 @@ def api_target_root():
         "source": "custom" if custom_ok else "auto",
         # 界面在盘符下拉里要把系统盘标出来。不标的话用户看见"C: 剩余 20 GB"很可能就
         # 选了它，然后要等到保存时才被警告——而那时他已经做完了选择。
-        "system_drive": (os.environ.get("SystemDrive") or "C:").rstrip("\\"),
+        "system_drive": sysdirs.system_drive(),
         # 存过但现在校验不过（盘拔了、盘符变了、目录被别的程序删了）。**必须显式
         # 告知**：planner 此时静默回落到自动挑的盘，用户若以为还在用自己设的位置，
         # 就会拿着错误的预期按下执行。

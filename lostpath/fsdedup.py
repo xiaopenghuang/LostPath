@@ -28,6 +28,16 @@ __all__ = ["measure", "copytree_keep_links", "EXDEV"]
 EXDEV = errno.EXDEV
 
 
+def _is_reparse_dir(path: str) -> bool:
+    """Return whether *path* is a symlink/junction that must not be traversed."""
+    if os.path.islink(path):
+        return True
+    try:
+        return bool(os.lstat(path).st_file_attributes & 0x400)
+    except (OSError, AttributeError):
+        return False
+
+
 class Measurement:
     """一次测量的结果。字段分开而非只给一个数，是因为界面要解释差异从何而来。"""
 
@@ -70,9 +80,13 @@ def measure(root: str) -> Measurement:
     info: dict[tuple[int, int], list[int]] = {}   # key -> [size, nlink, inside]
     logical = 0
     files = 0
-    for dirpath, _dirs, names in os.walk(root):
+    for dirpath, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs
+                   if not _is_reparse_dir(os.path.join(dirpath, d))]
         for n in names:
             p = os.path.join(dirpath, n)
+            if os.path.islink(p):
+                continue
             try:
                 st = os.stat(p, follow_symlinks=False)
             except OSError:
@@ -116,14 +130,14 @@ def copytree_keep_links(src: str, dst: str) -> int:
         os.makedirs(out_dir, exist_ok=True)
         for d in list(dirs):
             # 重解析点不跟进：跟进会把链接目标的内容整份复制过来
-            try:
-                if os.lstat(os.path.join(dirpath, d)).st_file_attributes & 0x400:
-                    dirs.remove(d)
-            except (OSError, AttributeError):
-                pass
+            if _is_reparse_dir(os.path.join(dirpath, d)):
+                dirs.remove(d)
         for n in names:
             s = os.path.join(dirpath, n)
             d = os.path.join(out_dir, n)
+            if os.path.islink(s):
+                # 不把文件符号链接跟随成普通文件；链接目标不属于这棵树的搬运范围。
+                continue
             try:
                 st = os.stat(s, follow_symlinks=False)
             except OSError:

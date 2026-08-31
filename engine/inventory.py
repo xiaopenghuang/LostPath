@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 import winreg
 from pathlib import Path
@@ -34,9 +35,9 @@ APPX_FRAMEWORK_HINTS = ("vclib", "net.native", "framework", "runtime", "uwpdeskt
 
 # 命中即视为碎片组件（连同 SystemComponent=1），聚合进同发布商主程序或发布商桶
 COMPONENT_HINTS = re.compile(
-    r"sdk|runtime|redistributable|addon|plugin|module|\\bdriver\\b|组件|模块|语言包|运行库|"
+    r"sdk|runtime|redistributable|addon|plugin|module|\bdriver\b|组件|模块|语言包|运行库|"
     r"cu(dnn|fft|blas|sparse|rand)|nvjitlink|physx| texture|纹理|材质|directx|openal|"
-    r"\\bres:\\b|setup|bootstrapper", re.I)
+    r"\bres:\b|setup|bootstrapper", re.I)
 
 VENDOR_SUFFIXES = (
     " corporation", " corp", " inc", " ltd", " co", " llc", " gmbh", " networks",
@@ -189,7 +190,18 @@ def read_appx() -> list[dict]:
 def load_portable() -> list[dict]:
     if not PORTABLE_FILE.exists():
         return []
-    return json.loads(PORTABLE_FILE.read_text(encoding="utf-8-sig"))
+    try:
+        raw = json.loads(PORTABLE_FILE.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(raw, list):
+        return []
+    # 坏配置不该阻止引擎启动。只保留 build_entities 能安全消费的条目，
+    # 其余内容交给下一次确认覆盖。
+    return [item for item in raw
+            if isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and item["name"].strip()]
 
 
 def raw_icon_path(e: dict, fields=("display_icon", "uninstall_string")) -> str | None:
@@ -335,7 +347,9 @@ def build_entities() -> tuple[list[dict], dict]:
     for m in merged.values():
         # 图标源优先级：DisplayIcon → 本体目录里最大的 exe → UninstallString（多为卸载器，最后兜底）
         icon_src = m.get("icon_src") or first_exe(m["location"], m["name"]) or m.get("icon_src2")
-        eid = "r:" + m["name"]
+        # 名称不是实体身份：不同发布商可以安装同名软件。发布商和名称都用
+        # 与合并键一致的归一化值，保证同一实体稳定、不同实体不撞 id。
+        eid = "r:" + (m["pub_norm"] or "unknown") + ":" + norm_token(m["name"])
         entities.append({
             "id": eid,
             "name": m["name"], "version": m["version"], "publisher": m["publisher"],
@@ -413,12 +427,19 @@ def build_entities() -> tuple[list[dict], dict]:
 
 def link_traces(entities: list[dict], trace_items: list[dict]) -> tuple[dict, list[dict]]:
     """把 v4 的 C 盘归因痕迹挂到台账实体；按归一化名 / 发布商匹配。"""
-    by_name = {norm_token(x["name"]): x for x in entities if norm_token(x["name"])}
-    by_pub: dict[str, dict] = {}
+    # 只使用唯一键。重复名称/发布商时任意挑一个会把痕迹静默挂错实体，
+    # 这种情况下宁可留在未挂接堆，也不把数据归给最后枚举到的那一项。
+    names: dict[str, list[dict]] = {}
+    by_pub_groups: dict[str, list[dict]] = {}
     for x in entities:
-        pn = norm_publisher(x.get("publisher"))
-        if pn:
-            by_pub.setdefault(pn, x)
+        name = norm_token(x.get("name", ""))
+        if name:
+            names.setdefault(name, []).append(x)
+        pub = norm_publisher(x.get("publisher"))
+        if pub:
+            by_pub_groups.setdefault(pub, []).append(x)
+    by_name = {k: v[0] for k, v in names.items() if len(v) == 1}
+    by_pub = {k: v[0] for k, v in by_pub_groups.items() if len(v) == 1}
 
     unlinked = []
     for t in trace_items:
@@ -550,8 +571,16 @@ def save_portable(items: list[dict]) -> int:
         name = (it.get("name") or "").strip()
         if name and name not in merged:
             merged[name] = {"name": name, "dir": it.get("dir"), "exe": it.get("exe")}
-    PORTABLE_FILE.write_text(
-        json.dumps(list(merged.values()), ensure_ascii=False, indent=1), encoding="utf-8")
+    # 和快照/台账一样原子替换。直接 write_text 在进程中断时会留下半个 JSON，
+    # 下一次启动就会把便携软件整块读坏。
+    fd, tmp = tempfile.mkstemp(dir=str(PORTABLE_FILE.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(list(merged.values()), f, ensure_ascii=False, indent=1)
+        os.replace(tmp, PORTABLE_FILE)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return len(merged)
 
 
@@ -562,6 +591,14 @@ def body_tree(root_path: str, max_entries: int = 4000, budget_s: float = 8.0):
         return None
     deadline = time.time() + budget_s
     truncated = False
+
+    def is_reparse(path: str) -> bool:
+        if os.path.islink(path):
+            return True
+        try:
+            return bool(os.lstat(path).st_file_attributes & 0x400)
+        except (OSError, AttributeError):
+            return False
 
     def walk(path: str, depth: int) -> dict:
         nonlocal truncated
@@ -577,9 +614,13 @@ def body_tree(root_path: str, max_entries: int = 4000, budget_s: float = 8.0):
         for e in entries:
             try:
                 if e.is_file(follow_symlinks=False):
+                    if is_reparse(e.path):
+                        continue
                     node["size"] += e.stat(follow_symlinks=False).st_size
                     node["files"] += 1
                 elif e.is_dir(follow_symlinks=False):
+                    if is_reparse(e.path):
+                        continue
                     if len(node["children"]) < 60 and not truncated:
                         node["children"].append(walk(e.path, depth + 1))
                     else:

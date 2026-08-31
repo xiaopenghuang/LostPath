@@ -50,8 +50,16 @@ def load_latest() -> tuple[list[dict], dict]:
             "sizes_reason": "这份快照是早期格式，体积没有排除硬链接。重新扫描一次即可。",
         }
 
-    items = raw.get("items") or []
+    if not isinstance(raw, dict):
+        return [], {"present": False, "reason": "快照结构损坏：顶层必须是对象"}
+    items = raw.get("items")
+    if not isinstance(items, list):
+        return [], {"present": False, "reason": "快照结构损坏：items 必须是数组"}
+    if not all(isinstance(item, dict) for item in items):
+        return [], {"present": False, "reason": "快照结构损坏：items 包含无效条目"}
     ver = raw.get("schema_version")
+    if ver is not None and (isinstance(ver, bool) or not isinstance(ver, int)):
+        return [], {"present": False, "reason": "快照结构损坏：schema_version 必须是整数"}
     meta = {
         "present": True,
         "schema_version": ver,

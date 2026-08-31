@@ -151,6 +151,23 @@ def test_interrupted_move_is_still_discoverable(cache_dir, monkeypatch):
     assert e["source_path"], "认领的条目必须带原路径，否则用户不知道这是哪来的数据"
 
 
+def test_rollback_uses_recycle_intent_when_recycled_to_was_not_written(cache_dir):
+    """移动完成后若进程在写 recycled_to 前崩溃，回滚仍能按意图找回数据。"""
+    before = tree(cache_dir)
+    op = executor.execute_cleanup(record_for(cache_dir))
+    saved = manifest.find(op["id"])
+    saved["recycle_intent"] = saved["recycled_to"]
+    saved["recycled_to"] = None
+    saved["status"] = "failed"
+    manifest.save(saved)
+
+    restored = executor.rollback(op["id"])
+
+    assert cache_dir.is_dir() and tree(cache_dir) == before
+    assert restored["status"] == "rolled_back"
+    assert manifest.find(op["id"])["recycle_intent"]
+
+
 def test_locked_dir_is_not_silently_copied(cache_dir, monkeypatch):
     r"""同盘改名失败（被占用）时**不许**退化成复制。
 

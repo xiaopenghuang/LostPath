@@ -19,6 +19,8 @@ r"""痕迹挂接与合成的守恒（`engine/inventory.py`）。
 不碰它们；**不要在这里调 `build_entities()` / `load_portable()` / `save_portable()`**，
 那会读写用户的真实数据。
 """
+import json
+import os
 import sys
 from pathlib import Path
 
@@ -268,3 +270,89 @@ def test_entities_without_traces_report_zero_not_none():
     ents = ledger(("Firefox", "Mozilla"))
     inventory.link_traces(ents, [])
     assert ents[0]["traces_size"] == 0
+
+
+def test_duplicate_registry_names_get_distinct_entity_ids(monkeypatch):
+    """同名不同发布商必须是两条稳定且不冲突的台账实体。"""
+    monkeypatch.setattr(inventory, "read_registry", lambda: [
+        {"name": "Launcher", "version": "1", "publisher": "Alpha Inc",
+         "install_location": None, "uninstall_string": None, "display_icon": None,
+         "estimated_size_kb": None, "system_component": False},
+        {"name": "Launcher", "version": "2", "publisher": "Beta Inc",
+         "install_location": None, "uninstall_string": None, "display_icon": None,
+         "estimated_size_kb": None, "system_component": False},
+    ])
+    monkeypatch.setattr(inventory, "read_appx", lambda: [])
+    monkeypatch.setattr(inventory, "load_portable", lambda: [])
+
+    entities, _ = inventory.build_entities()
+
+    assert len(entities) == 2
+    assert len({e["id"] for e in entities}) == 2
+
+
+def test_duplicate_name_does_not_attach_trace_to_arbitrary_entity():
+    """名称歧义时不许把痕迹静默挂到最后枚举到的实体。"""
+    ents = [
+        {"id": "r:alpha:launcher", "name": "Launcher", "publisher": "Alpha",
+         "source": "registry"},
+        {"id": "r:beta:launcher", "name": "Launcher", "publisher": "Beta",
+         "source": "registry"},
+    ]
+    ts = [trace(r"C:\\x\\Launcher", owner="Launcher", size=42)]
+
+    _, unlinked = inventory.link_traces(ents, ts)
+
+    assert unlinked == ts
+    assert not any(e.get("traces") for e in ents)
+
+
+def test_component_hints_match_driver_and_resource_tokens():
+    assert inventory.COMPONENT_HINTS.search("Acme Driver")
+    assert inventory.COMPONENT_HINTS.search("Acme res:foo")
+
+
+def test_malformed_portable_config_is_ignored(monkeypatch, tmp_path):
+    path = tmp_path / "portable.json"
+    path.write_text(json.dumps({"not": "a list"}), encoding="utf-8")
+    monkeypatch.setattr(inventory, "PORTABLE_FILE", path)
+
+    assert inventory.load_portable() == []
+
+
+def test_portable_save_is_atomic(monkeypatch, tmp_path):
+    path = tmp_path / "portable.json"
+    path.write_text(json.dumps([{"name": "Existing", "dir": "C:\\Existing"}]),
+                    encoding="utf-8")
+    monkeypatch.setattr(inventory, "PORTABLE_FILE", path)
+    original = path.read_bytes()
+    real_dump = inventory.json.dump
+
+    def exploding_dump(*args, **kwargs):
+        real_dump(*args, **kwargs)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(inventory.json, "dump", exploding_dump)
+    with pytest.raises(OSError):
+        inventory.save_portable([{"name": "New", "dir": "D:\\New"}])
+
+    assert path.read_bytes() == original
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_body_tree_does_not_follow_reparse_directories(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "real.bin").write_bytes(b"r" * 500)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "big.bin").write_bytes(b"b" * 9000)
+    try:
+        os.symlink(outside, root / "link", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("建符号链接需要权限，本机不允许")
+
+    tree = inventory.body_tree(str(root))
+
+    assert tree["size"] == 500
+    assert all(child["name"] != "link" for child in tree["children"])

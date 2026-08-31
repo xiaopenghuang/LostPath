@@ -143,3 +143,21 @@ def test_copytree_keep_links_skips_reparse_points(tmp_path):
     fsdedup.copytree_keep_links(str(src), str(dst))
     assert (dst / "real.bin").exists()
     assert not (dst / "link" / "big.bin").exists(), "不该把链接目标的内容复制进来"
+
+
+def test_measure_does_not_follow_reparse_directories(tmp_path):
+    """测量也不能把目录 junction/符号链接的外部内容算进来。"""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "real.bin").write_bytes(b"r" * 500)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "big.bin").write_bytes(b"b" * 9000)
+    try:
+        os.symlink(outside, root / "link", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("建符号链接需要权限，本机不允许")
+
+    m = fsdedup.measure(str(root))
+
+    assert m.logical == m.dedup == m.freeable == 500

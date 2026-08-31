@@ -30,11 +30,12 @@ def free_port():
         return s.getsockname()[1]
 
 
-def call(url, method="GET", body=None):
+def call(url, method="GET", body=None, headers=None):
     data = json.dumps(body).encode("utf-8") if body is not None else None
     req = urllib.request.Request(
         url, method=method, data=data,
-        headers={"Content-Type": "application/json"} if data else {})
+        headers={**({"Content-Type": "application/json"} if data else {}),
+                 **(headers or {})})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return r.status, json.loads(r.read().decode("utf-8"))
@@ -128,9 +129,19 @@ def test_dry_run_is_the_default(engine):
     assert status == 200, body
     assert body["status"] == "dry_run"
     assert cache.exists(), "dry-run 却动了文件"
-
     status, ops = call(f"{base}/api/act/operations")
     assert ops["summary"]["total"] == 0, "dry-run 不该留下操作记录"
+
+
+def test_cross_origin_write_is_rejected(engine):
+    """外部网页不能借浏览器会话触发执行端点。"""
+    base, cache = engine
+    status, body = call(
+        f"{base}/api/act/execute", "POST", {"path": str(cache), "dry_run": False},
+        headers={"Origin": "https://evil.example"},
+    )
+    assert status == 403, body
+    assert cache.exists(), "跨站请求不应触碰源目录"
 
 
 # --------------------------------------------- 真执行 → 回滚 → 历史

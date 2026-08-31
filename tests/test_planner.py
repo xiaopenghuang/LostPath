@@ -6,6 +6,7 @@ r"""计划器回归。**重点在拦阻，不在候选列表。**
 """
 import ntpath
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -360,6 +361,26 @@ def test_default_target_root_is_absolute():
     assert os.path.isabs(root), f"目标根不是绝对路径：{root}"
     assert not root[1:].startswith(":") or root[2:3] in ("\\", "/"), \
         f"盘符后缺分隔符：{root}"
+
+
+def test_default_target_root_skips_actual_system_drive(monkeypatch):
+    """系统盘是 D 时，自动目标不能把 D 自己当成迁移盘。"""
+    class Kernel:
+        def GetLogicalDrives(self):
+            return (1 << 2) | (1 << 3) | (1 << 4)  # C, D, E
+
+        def GetDriveTypeW(self, _root):
+            return 3
+
+    monkeypatch.setattr(planner.ctypes, "windll",
+                        SimpleNamespace(kernel32=Kernel()))
+    monkeypatch.setattr(planner.sysdirs, "system_drive", lambda: "D:")
+    monkeypatch.setattr(planner, "drive_free_bytes",
+                        lambda root: {"C:\\": 100, "D:\\": 900, "E:\\": 500}[root])
+
+    root = planner.default_target_root()
+
+    assert root.startswith("E:\\"), root
 
 
 def test_safe_name_strips_path_separators():

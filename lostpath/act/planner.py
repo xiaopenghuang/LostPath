@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from . import envvar as envvar_mod
 from . import redirect as redirect_mod
 from . import target_root as target_root_mod
+from .. import sysdirs
 
 # 门槛：小目录搬来搬去的收益抵不过风险与用户的注意力成本
 MIN_ACTIONABLE_SIZE = 50 * 1024 * 1024
@@ -115,6 +116,8 @@ def drive_free_bytes(path: str) -> int | None:
 
 def is_reparse_point(path: str) -> bool:
     """已是 junction/符号链接的目录不能再迁移——它的体积本就不在这个盘上。"""
+    if os.path.islink(path):
+        return True
     try:
         return bool(os.lstat(path).st_file_attributes & 0x400)
     except (OSError, AttributeError, ValueError):
@@ -438,12 +441,13 @@ def default_target_root() -> str:
     只做建议，用户可改。挑最大剩余而非固定盘符，是因为每台机器盘符布局不同。
     """
     best, best_free = None, -1
+    system_drive = sysdirs.system_drive().upper()
     bitmask = ctypes.windll.kernel32.GetLogicalDrives()
     for i in range(26):
         if not (bitmask >> i) & 1:
             continue
         letter = chr(ord("A") + i) + ":"
-        if letter == "C:":
+        if letter == system_drive:
             continue
         if ctypes.windll.kernel32.GetDriveTypeW(letter + "\\") != 3:  # DRIVE_FIXED
             continue
@@ -453,7 +457,7 @@ def default_target_root() -> str:
     # 必须带分隔符：os.path.join("E:", x) 得到 "E:x"，那是**盘符相对路径**（相对于
     # 进程在 E: 上的当前目录），不是 "E:\x"。它在当前目录恰为根时看起来是对的，
     # 换个工作目录就会写到别处——对一个搬用户数据的工具来说是事故。
-    return os.path.join((best or "C:") + os.sep, "LostPathStore")
+    return os.path.join((best or system_drive) + os.sep, "LostPathStore")
 
 
 def root_for_path(path: str, fallback: str | None = None) -> str:

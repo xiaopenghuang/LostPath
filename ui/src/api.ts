@@ -101,6 +101,8 @@ export interface SnapshotMeta {
 
 export interface LpData {
   built_from: string;
+  /** 扫描根所在的系统盘，避免把非 C 盘机器的拓扑误标成 C 盘 */
+  system_drive?: string;
   items: LpNode[];
   software: SoftwareEntity[];
   unlinked_traces: LpNode[];

@@ -29,6 +29,27 @@ def test_corrupt_snapshot_degrades_instead_of_raising():
     assert "损坏" in meta["reason"]
 
 
+@pytest.mark.parametrize("raw, fragment", [
+    ('"valid json but not an object"', "顶层必须是对象"),
+    (json.dumps({"schema_version": 3, "items": {"path": "C:\\x"}}),
+     "items 必须是数组"),
+    (json.dumps({"schema_version": 3, "items": [None]}),
+     "items 包含无效条目"),
+    (json.dumps({"schema_version": "3", "items": []}),
+     "schema_version 必须是整数"),
+])
+def test_structurally_invalid_snapshot_degrades_without_startup_crash(raw, fragment):
+    """JSON 可解析不等于快照可消费，结构错误也必须走正常降级。"""
+    paths.ensure_dirs()
+    paths.latest_snapshot().write_text(raw, encoding="utf-8")
+
+    items, meta = snapshots.load_latest()
+
+    assert items == []
+    assert meta["present"] is False
+    assert fragment in meta["reason"]
+
+
 # ------------------------------------------------------- 信封与版本兼容
 def test_save_then_load_roundtrip():
     recs = [{"path": "C:\\x", "size": 10, "owner": "甲"},

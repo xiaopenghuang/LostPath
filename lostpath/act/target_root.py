@@ -21,6 +21,7 @@ import tempfile
 import threading
 
 from ..storage import paths as lp_paths
+from .. import sysdirs
 
 # 写入探测的上限。本地磁盘上正常是 1~2 ms，2 秒已经是三个数量级的余量——
 # 超过它说明这个位置有别的毛病，不该让界面跟着一起等。
@@ -183,7 +184,7 @@ def validate(raw: str | None) -> dict:
                 "warnings": warnings}
 
     # ---- 到这里技术上都能用了，剩下的是"能用但你可能不想要" ----
-    system_drive = (os.environ.get("SystemDrive") or "C:").rstrip("\\")
+    system_drive = sysdirs.system_drive().rstrip("\\")
     if drive.upper() == system_drive.upper():
         warnings.append(_err(
             "same_as_system_drive",
