@@ -361,6 +361,49 @@ def api_set_target_root(req: TargetRootReq):
             "auto": planner.default_target_root()}
 
 
+class OverrideReq(BaseModel):
+    # 要覆盖哪个源目录
+    source: str
+    # None 或空串 = 清掉这一条、回落到全局根
+    path: str | None = None
+
+
+@app.put("/api/target-root/override")
+def api_set_override(req: OverrideReq):
+    r"""给单个源目录指定专属的目标根。校验不过返回 400 且不落盘。
+
+    **source 必须在当前快照里**，理由与 /api/act/execute 相同：这个值会被存下来、
+    之后一路进 os.path.join。不限制的话调用方可以为任意路径预置一条覆盖，等哪天
+    那个路径进了快照就按它执行——把"现在无害的写入"变成"以后的任意目标"。
+    """
+    if not _record_by_path(req.source):
+        return JSONResponse(status_code=404, content={
+            "error": "该路径不在当前快照里。只能为扫描过的目录设置目标位置"})
+    res = target_root_mod.set_override(req.source, req.path)
+    if not res["ok"]:
+        return JSONResponse(status_code=400, content=res)
+    # 回一个"这条现在会搬到哪"，免得界面自己再拼一遍镜像后缀——那等于把
+    # planner 的规则复制到前端，两份实现必然漂移。
+    record = _record_by_path(req.source)
+    plan = planner.plan_for(record)
+    return {**res, "target": plan.target, "action": plan.action}
+
+
+@app.get("/api/target-root/overrides")
+def api_list_overrides():
+    """所有逐项覆盖，以及每条现在是否还有效。
+
+    带上 valid 是因为 planner 对失效的覆盖是**静默回落**的——不显式告知的话，
+    用户会以为还在用自己设的位置，然后拿着错误的预期按下执行。
+    """
+    out = []
+    for key, raw in sorted(target_root_mod.load_overrides().items()):
+        checked = target_root_mod.validate(raw)
+        out.append({"source": key, "root": raw, "valid": checked["ok"],
+                    "errors": checked["errors"]})
+    return {"overrides": out}
+
+
 @app.get("/api/plan")
 def api_plan(target_root: str | None = None):
     """为当前快照里的每条痕迹出计划。只读，不碰文件。
