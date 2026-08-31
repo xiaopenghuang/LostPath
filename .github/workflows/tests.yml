@@ -1,0 +1,52 @@
+# 加远端后即可生效。目前仓库纯本地无远端，真正在挡退化的是 pre-commit 钩子
+# （tools/hooks/pre-commit，装法见 tools/install-hooks.sh）。
+#
+# 必须用 windows runner：被测代码要读注册表（winreg）、调 PowerShell、判断
+# Windows 重解析点，在 ubuntu 上连 import 都过不去。
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  fast:
+    # 快套件：读脱敏 fixtures，不碰真机状态，几秒跑完
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: pip install fastapi uvicorn
+      - name: 归因基准 + 扫描管道 + 快照层
+        run: python -m pytest -q
+
+  integration:
+    # 集成套件：起真引擎子进程并全盘扫 C 盘。runner 的 C 盘内容与开发机不同，
+    # 所以这里只验管道跑得通、端点契约对，不验具体归因数字（那是 fixtures 的活）。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: pip install fastapi uvicorn
+      - name: 扫描端点端到端
+        run: python -m pytest -m integration -q
+
+  ui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: ui
+      # build 已含 tsc --noEmit：vite/esbuild 只做类型擦除、不报未定义标识符，
+      # 漏个 import 能编译通过、运行时才炸（M3 犯过）
+      - run: npm run build
+        working-directory: ui

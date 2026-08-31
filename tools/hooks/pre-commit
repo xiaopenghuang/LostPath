@@ -1,0 +1,42 @@
+#!/bin/sh
+# LostPath 提交前自动跑快测试套件（约 4s）。
+#
+# 存在的理由：归因基准以前靠"人记得跑 probe/compare_v3_v4.py"来守，而本项目已经
+# 有过归因证据源整段失效却无人发现的事故（APPX_IDX 键名，conf 0.98 的
+# appx_family 从未触发，基准精度却是满分）。守规则不能依赖记性。
+#
+# 不跑 integration 标记的测试：那些要起真引擎并全盘扫 C 盘，约 40s，不适合挡在
+# 每次提交前。发版或改扫描管道时手动跑：
+#   python -m pytest -m integration
+#
+# 临时跳过（例如只改文档、或正在做半成品提交）：
+#   LOSTPATH_SKIP_TESTS=1 git commit ...
+# 装/卸：tools/install-hooks.sh / rm .git/hooks/pre-commit
+
+if [ -n "$LOSTPATH_SKIP_TESTS" ]; then
+    echo "[pre-commit] 已按 LOSTPATH_SKIP_TESTS 跳过测试"
+    exit 0
+fi
+
+PY="${LOSTPATH_PY:-python}"
+if ! command -v "$PY" >/dev/null 2>&1 && [ ! -x "$PY" ]; then
+    echo "[pre-commit] 找不到解释器 $PY，跳过测试"
+    echo "[pre-commit] 用 LOSTPATH_PY 指定，例如："
+    echo "[pre-commit]   export LOSTPATH_PY=/g/conda/envs/lostpath/python.exe"
+    exit 0
+fi
+
+if ! "$PY" -c "import pytest" 2>/dev/null; then
+    echo "[pre-commit] 未装 pytest，跳过测试"
+    echo "[pre-commit] 装：$PY -m pip install -r requirements-dev.txt"
+    exit 0
+fi
+
+echo "[pre-commit] 跑快测试套件…"
+if ! "$PY" -m pytest -q; then
+    echo ""
+    echo "[pre-commit] 测试失败，提交已中止。"
+    echo "[pre-commit] 若确认要提交（如半成品）：LOSTPATH_SKIP_TESTS=1 git commit ..."
+    exit 1
+fi
+exit 0

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- LostPath 图标。与侧栏 logo 同形（雷达 = 扫描），同一套蓝渐变。
+       用 SVG 而非 ico：矢量任意尺寸清晰，且能跟随 prefers-color-scheme。 -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4493f8"/>
+      <stop offset="1" stop-color="#1f6feb"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#g)"/>
+  <g fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round">
+    <!-- 三段同心弧：扫描波 -->
+    <path d="M9 21a9.9 9.9 0 0 1 14 0" opacity=".45"/>
+    <path d="M12.4 24.1a5.1 5.1 0 0 1 7.2 0" opacity=".75"/>
+  </g>
+  <circle cx="16" cy="10.4" r="2.6" fill="#fff"/>
+  <path d="M16 13v9.2" stroke="#fff" stroke-width="1.9" stroke-linecap="round" opacity=".9"/>
+</svg>

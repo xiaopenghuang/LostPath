@@ -1,0 +1,6 @@
+# 开发依赖。运行时依赖（fastapi/uvicorn）已在 conda env `lostpath` 里，见 HANDOVER §4。
+# 装：python -m pip install -r requirements-dev.txt
+#
+# 钉死版本而非用范围：这个环境是用户既有 conda 环境之一，跑测试时把它悄悄升级
+# 到某个不兼容的新版本，代价由用户承担。
+pytest==8.3.5

@@ -1,0 +1,286 @@
+@import './tokens.css';
+
+/* 双主题变量。
+   ------------------------------------------------------------------
+   **每个文字色都实测过对比度，值不是挑好看的，是挑过线的。** 下面注释里
+   的数字是 WCAG 相对亮度比（正文需 ≥4.5:1，非文本元素 ≥3:1），三个数依次
+   对 --bg / --panel / --panel2 三种实际落地背景。
+
+   --tx3 那条改动值得单独说：它原先浅色 #8c959f = 3.04:1、深色 #667089 =
+   3.82:1，**两个主题都不过 4.5:1**，而它在组件里被引用 63 次，承载的正是
+   路径、体积说明、判定 hint —— 用户就是靠读路径决定该不该删一个目录。
+   "看得见但费劲"在这个工具里不是体验问题：看错路径会删错东西。 */
+:root,
+:root[data-theme='dark'] {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --panel2: #1c2128;
+  --deep: #010409;
+  --line: #21262d;
+  --line2: #30363d;
+  --tx: #e6edf3;    /* 16.02 / 14.64 / 13.69 */
+  --tx2: #8b949e;   /*  6.15 /  5.62 /  5.26 */
+  --tx3: #8b949e;   /*  6.15 /  5.62 /  5.26 —— 原 #667089 只有 3.82，不过线 */
+  --blue: #2f81f7;
+  --blue2: #4493f8; /*  6.11 /  5.58 /  5.22 */
+  --cyan: #7adcf0;  /* 12.01 / 10.97 / 10.26 */
+  --red: #f85149;   /*  5.65 /  5.16 /  4.83 */
+  --green: #3fb950; /*  7.45 /  6.81 /  6.37 */
+  /* 警告色：调色板原先只有红/绿，"暂不可处理"既不是失败也不是通过，缺一档 */
+  --amber: #d29922; /*  7.50 /  6.85 /  6.41 */
+}
+
+/* --tx2 与 --tx3 在深色下取了同一个值，这是**刻意的**而非漏改：深色背景上
+   要同时满足 4.5:1 且与 --tx2 拉开可辨差距，就得压到 #7d8798（4.77 / 4.46）
+   那一档，余量薄到换个卡片底色就掉线。层级改由字号（--fs-sm vs --fs-md）与
+   字重承担——Swiss 风格本来就主张用尺寸而非灰度做层级。浅色下两者仍有区分。 */
+
+:root[data-theme='light'] {
+  --bg: #f6f8fa;
+  --panel: #ffffff;
+  --panel2: #eaeef2;
+  --deep: #dfe4ea;
+  --line: #d8dee4;
+  --line2: #c9d1d9;
+  --tx: #1f2328;    /* 14.84 / 15.80 / 13.50 */
+  --tx2: #57606a;   /*  6.00 /  6.39 /  5.46 */
+  --tx3: #656d76;   /*  4.93 /  5.25 /  4.50 —— 原 #8c959f 只有 3.04，不过线 */
+  --blue: #0969da;  /*  4.88 /  5.19 /  4.45 */
+  --blue2: #218bff;
+  /* --cyan 原是 #0e7a8d，对 --panel2 只有 4.30。之前没发现是因为只在白底与
+     --bg 上验过（4.71 / 5.02 都过），而它实际会落在更暗的底上——表格行悬停
+     底色就是 --panel2 那一档。收到 #0b6b7a 后五种浅色背景最低 5.30。
+     **教训：验对比度不能只挑最亮那个底，要按元素实际会落在哪些底上算。** */
+  --cyan: #0b6b7a;  /*  5.80 /  6.18 /  5.30 */
+  --red: #cf222e;   /*  5.03 /  5.36 /  4.59 */
+  --green: #1a7f37; /*  4.77 /  5.08 /  4.36 */
+  --amber: #9a6700; /*  4.57 /  4.87 /  4.17 */
+}
+
+body {
+  background: var(--bg);
+  overflow: hidden;
+}
+
+/* 卡片风格分层：不再千篇一律 */
+.lp-card-accent {
+  border-left: 3px solid var(--blue) !important;
+}
+.lp-card-ghost {
+  border: 1px dashed var(--line2) !important;
+  background: transparent !important;
+}
+/* 可点条目。
+   ------------------------------------------------------------------
+   这个类现在既管样式也管"它是个按钮"这件事的视觉部分。三处列表（仪表盘占用
+   大户、软件台账 255 行、迁移中心候选）此前是 `div onClick`：a11y 树里只有
+   StaticText，没有按钮角色，键盘 Tab 根本停不下来——也就是说键盘用户打不开
+   任何一个软件的详情。侧栏导航早先修过（button + aria-current），这三处漏了。
+
+   改成 <button> 之后要压掉浏览器默认按钮外观（背景、边框、字体、居中），
+   所以有下面这堆 reset；写在 CSS 里而不是每处 inline style 里，是因为三处
+   都要用，且 inline 写不了 :hover / :focus-visible。
+
+   transition 的存在理由：此前状态是 0ms 瞬切，Skill 的 state-transition
+   一条要求状态变化该过渡而非跳变。时长走 token，prefers-reduced-motion 下
+   --dur-fast 已被置 0，这里不必再写一遍媒体查询。 */
+.lp-item {
+  display: flex;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out);
+}
+.lp-item:hover {
+  background: rgba(127, 145, 180, 0.12) !important;
+}
+/* 焦点环只在键盘聚焦时出现（:focus-visible 而非 :focus）：鼠标点击也触发
+   焦点，那样每次点开一个软件都会留下一圈蓝框，用户会以为哪里出错了。 */
+.lp-item:focus-visible,
+.lp-nav:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+/* 侧栏导航项与主题/设置按钮共用。它们本来就是 <button>，这里只补焦点环与过渡。 */
+.lp-nav {
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+.lp-nav:hover {
+  background: rgba(127, 145, 180, 0.14);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--tx3);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 品牌区（侧栏顶部）。
+   ------------------------------------------------------------------
+   这里是全应用唯一的品牌标识——原生标题栏藏了之后（见 desktop/main.js），
+   左上角只剩这一处。所以值得排得像样一点，但**不能靠特效堆**：
+   Swiss/Minimalism 的做法是靠字距、字重、对比拉出层次，不是加阴影和光效。 */
+.lp-logo {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--blue2), var(--blue));
+  /* 双层阴影：外圈发光给"这是个应用图标"的分量，内圈高光模拟受光面。
+     两层都很淡——深色下 0.32、浅色下 0.22，不抢内容的注意力。 */
+  box-shadow:
+    0 2px 10px rgba(47, 129, 247, 0.32),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+.lp-logo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* 真 logo 是深色底的 PNG，蒙在渐变上会有底色边；缩一点并让渐变透出来，
+     看着像"图标嵌在磁贴里"而不是"图片贴在方块上" */
+  padding: 3px;
+}
+/* 真 logo 加载失败时才看得见的回退图标。img 在上面，盖住它。 */
+.lp-logo-fallback {
+  position: absolute;
+  color: #fff;
+  font-size: 17px;
+}
+.lp-logo img {
+  position: relative;
+  z-index: 1;
+}
+
+.lp-brand {
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 1.15;
+  /* 字距收紧 0.3px：无衬线体在 700 字重下默认字距偏松，收一点才像排过版。 */
+  letter-spacing: -0.3px;
+  /* 渐变描字。fallback 是纯 --tx —— 不支持 background-clip: text 的环境
+     （或高对比度模式强制取色时）仍然可读，不会变成透明的空白。 */
+  color: var(--tx);
+  background: linear-gradient(100deg, var(--tx) 10%, var(--blue2) 130%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+/* 高对比度模式下把渐变撤掉：那个模式的用户明确要求系统接管配色。 */
+@media (forced-colors: active) {
+  .lp-brand {
+    -webkit-text-fill-color: currentColor;
+    background: none;
+  }
+}
+.lp-brand-sub {
+  font-size: 9.5px;
+  /* 字距放到 2px 并全大写：小字号 + 宽字距是标签式副标题的常规做法，
+     与主标题的紧字距形成对照，层次靠"疏密"而不是靠再加一个颜色。 */
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--tx3);
+  margin-top: 1px;
+}
+
+/* 页面容器。
+   ------------------------------------------------------------------
+   原先每页各写 `maxWidth: 1180`（软件台账写 1280），于是窗口放大到 1920 时内容
+   **卡在 1180 不动**，右边空一大片——用户把窗口拉大，界面不跟着用。
+
+   现在按窗口宽度分档给上限，而不是一个死值：小窗不挤（还是 1180 那一档），
+   大窗把多出来的空间用起来，超宽屏才封顶——正文行宽无限拉长反而难读
+   （Skill 的 line-length-control：桌面 60~75 字符）。
+
+   1440 / 1920 是常见分辨率的分界。`min()` 让它在两档之间也平滑，不是跳变。 */
+.lp-page {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+@media (min-width: 1500px) {
+  .lp-page {
+    max-width: min(1480px, calc(100vw - 320px));
+  }
+}
+@media (min-width: 1900px) {
+  .lp-page {
+    max-width: min(1760px, calc(100vw - 360px));
+  }
+}
+
+/* 详情页与迁移中心是左右两栏，窄窗下必须能折成上下——否则右栏被挤到没法读。
+   1280 以下折行：那是 Electron minWidth(1080) 与常见笔记本 1366 覆盖的区间。 */
+.lp-split {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+@media (max-width: 1279px) {
+  .lp-split {
+    flex-direction: column;
+  }
+  .lp-split > * {
+    width: 100%;
+    min-width: 0;
+  }
+}
+
+/* 主从布局里跟随滚动的详情栏（目前只有迁移中心用）。
+   ------------------------------------------------------------------
+   左列「可处理」有多少项就多高——27 项实测约 1840px，而右边「判定依据 +
+   执行计划」加起来只有约 430px，可视区约 900px。于是"滚下去选一项、再滚回去
+   按执行"要来回各约 900px。**项数越多越难用，这是几何上的必然，不是手感问题。**
+
+   为什么用 sticky 而不是给左列加内部滚动：本页只有一个滚动容器（App.tsx 主区
+   那个 overflowY:auto，高度恰为 100vh - 40px 顶栏）。sticky 以它的上沿为基准，
+   所以 top 与 max-height 都能**精确推出来**；而给左列设 max-height 就得去估
+   "上方 Alert + 汇总卡有多高"，那个高度还会随汇总卡 flex-wrap 折行而跳变。
+
+   max-height + overflow 是兜底，不是主要手段：sticky 一旦钉住，超出视口的部分
+   就再也滚不到了，而「执行此计划」按钮正在下面。窗口压到最小高度（minHeight
+   700，见 desktop/main.js）时可用高度只剩 632px，notes 长一点的 junction 计划
+   就会超——那时让它自己内部滚，而不是把按钮钉到屏幕外。
+     100vh − 40(顶栏) − 14(top) − 14(下留白) = 100vh − 68
+   这个数是推导出来的，不是估的。
+
+   1280 以下不启用：那时 .lp-split 已折成上下两栏，详情在列表下方，钉住反而
+   把它从阅读顺序里拽出来。断点与上面那条折行规则共用同一个值。 */
+@media (min-width: 1280px) {
+  .lp-sticky-detail {
+    position: sticky;
+    top: 14px;
+    max-height: calc(100vh - 68px);
+    overflow-y: auto;
+  }
+}
+
+.lp-mono {
+  font-family: var(--font-mono);
+}
+
+.lp-num {
+  font-variant-numeric: tabular-nums;
+}

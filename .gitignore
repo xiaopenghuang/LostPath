@@ -1,0 +1,55 @@
+__pycache__/
+*.pyc
+.venv/
+.npm-cache/
+ui/node_modules/
+ui/dist/
+scratch/
+desktop/node_modules/
+desktop/.npm-cache/
+logs/
+.mimosa/
+# 浏览器验证的临时产物（a11y 快照 / console 日志）。AGENTS.md 把"UI 改动浏览器逐页过"
+# 列为必做项，所以这个目录会反复出现；它是排查过程的副产品，不是交付物。
+.playwright-mcp/
+
+# 用户数据：每台机器各不相同，随源码分发会把开发者的机器状态发给所有用户。
+# 运行时位置见 lostpath/storage/paths.py（%LOCALAPPDATA%\LostPath\）。
+# data/ 是迁移前的旧位置，保留忽略规则以防误提交。
+data/
+
+# 打包产物。都能由 tools/engine.spec 与 desktop/package.json 重新生成，且体积很大
+# （引擎 exe 约 20 MB，安装包约 100 MB），不进仓库。
+build/
+dist/
+release/
+release2/
+
+# pytest 的缓存目录。跑一次 pytest 就会重建，没有保留价值。
+.pytest_cache/
+
+# ---------------------------------------------------------------- 不公开发布
+# 以下文件**保留在本地磁盘**（开发时还要用），只是不进仓库。
+
+# 给 AI 协作者看的开发笔记，合计约 150 KB。里面是逐轮的缺陷复盘、变异测试记录和
+# 待办清单，含大量本机绝对路径与过程性叙述——对使用者没有价值，对贡献者也不是
+# 入口文档（那是 README 的活）。AGENTS.md 留在磁盘上仍对 AI 工具生效。
+AGENTS.md
+HANDOVER.md
+MEMORY.md
+DESIGN.md
+.kiro/
+
+# npm 配置：里面的 cache 指向开发机的绝对路径，registry 是地域性选择。
+# 随仓库分发会让别人 npm install 往一个不存在的盘写。各人按自己环境配。
+.npmrc
+ui/.npmrc
+desktop/.npmrc
+
+# 编辑器/IDE 的个人配置
+.vscode/
+
+# 临时探测与一次性脚本。命名约定：下划线开头即"用完就删"。
+# **必须带前导斜杠限定在仓库根**：不带的话 `_*.py` 会连 `__init__.py` 一起吃掉，
+# 五个包的包声明文件全部消失——这是实际发生过的，靠比对新旧文件集才发现。
+/_*.py

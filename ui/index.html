@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>LostPath</title>
+    <style>
+      /* 首帧底色，在 CSS bundle 与 React 都还没到之前生效，避免白闪。
+         值必须跟着上次选的主题走：写死深色的话，浅色用户每次启动先看一下
+         深色闪屏。localStorage 在下面那段脚本里读，这里只留一个保守默认。 */
+      html {
+        background: #0d1117;
+      }
+      html[data-theme='light'] {
+        background: #f6f8fa;
+      }
+    </style>
+    <script>
+      // 在首帧之前把主题写到 <html> 上。放在 head 里同步执行是刻意的：
+      // 交给 React 做的话，主题要等 JS bundle 解析完才应用，中间那几十毫秒
+      // 是错的底色（浅色用户看到深色闪一下）。这段逻辑与 theme.tsx 的
+      // useTheme 读的是同一个 key，两边保持一致。
+      try {
+        var t = localStorage.getItem('lp-theme');
+        document.documentElement.dataset.theme = t === 'light' ? 'light' : 'dark';
+      } catch (e) {
+        /* 隐私模式下 localStorage 可能抛错，保持默认深色即可 */
+      }
+    </script>
+  </head>
+  <body style="margin: 0">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

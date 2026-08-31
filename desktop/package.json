@@ -1,0 +1,62 @@
+{
+  "name": "lostpath-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LostPath — 把 C 盘占用归因到具体软件，并给出可撤销的处理方案",
+  "author": "LostPath",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^26.0.12",
+    "rcedit": "^4.0.1"
+  },
+  "build": {
+    "appId": "com.lostpath.desktop",
+    "productName": "LostPath",
+    "afterPack": "./after-pack.js",
+    "directories": {
+      "output": "../release",
+      "buildResources": "../ico"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../dist/lostpath-engine.exe",
+        "to": "lostpath-engine.exe"
+      },
+      {
+        "from": "../ico/LostPath.ico",
+        "to": "LostPath.ico"
+      }
+    ],
+    "win": {
+      "icon": "../ico/LostPath.ico",
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "LostPath",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
