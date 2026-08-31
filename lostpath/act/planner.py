@@ -317,7 +317,7 @@ def plan_for(record: dict, target_root: str | None = None,
     if env_auto:
         p.action = "redirect"
         p.env_var = mech["var"]
-        p.target = mirror_target(target_root or effective_target_root(), path)
+        p.target = mirror_target(root_for_path(path, target_root), path)
         # 改变量不搬旧文件，所以腾出的空间来自随后清理旧缓存
         p.reclaimable = size
         p.steps = [
@@ -346,7 +346,7 @@ def plan_for(record: dict, target_root: str | None = None,
         # 不能删、又没有官方重定向机制：搬到别的盘，原位留 junction。
         # 数据一字不少地保留，代价是多占一次复制时间，且个别软件不认重解析点。
         p.action = "junction"
-        p.target = mirror_target(target_root or effective_target_root(), path)
+        p.target = mirror_target(root_for_path(path, target_root), path)
         p.reclaimable = size
         p.steps = [
             {"n": 1, "title": "复制到新盘",
@@ -454,6 +454,26 @@ def default_target_root() -> str:
     # 进程在 E: 上的当前目录），不是 "E:\x"。它在当前目录恰为根时看起来是对的，
     # 换个工作目录就会写到别处——对一个搬用户数据的工具来说是事故。
     return os.path.join((best or "C:") + os.sep, "LostPathStore")
+
+
+def root_for_path(path: str, fallback: str | None = None) -> str:
+    r"""这个源路径该用哪个目标根。优先级从高到低：
+
+      1. 该路径的**逐项覆盖**（用户为它单独指定过）
+      2. 调用方传进来的 `fallback`（一次性指定，如 /api/act/execute 带的值）
+      3. 全局保存的根
+      4. 自动挑
+
+    逐项覆盖排在 fallback 之前是刻意的：它是用户针对这一条做的、且已落盘的决定，
+    比"这次请求顺带带上的全局值"更具体。
+
+    **出计划与执行必须都走这个函数。** executor 会重新 plan_for 一遍，若两边解析
+    规则不同，就会出现"界面显示要搬到 G，实际搬到 E"——那比不灵活危险得多。
+    """
+    ov = target_root_mod.override_for(path)
+    if ov:
+        return ov
+    return fallback or effective_target_root()
 
 
 def effective_target_root() -> str:

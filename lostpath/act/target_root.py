@@ -222,15 +222,50 @@ def config_file():
     return lp_paths.target_root_config()
 
 
-def load_raw() -> str | None:
-    """用户存的原始字符串，不校验。给界面显示"你设过什么"用。"""
+def _read_config() -> dict:
+    """整份配置。读不出来（不存在、坏 JSON）就当空的。"""
     try:
         with open(config_file(), encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
-        return None
-    v = data.get("target_root") if isinstance(data, dict) else None
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_raw() -> str | None:
+    """用户存的原始字符串，不校验。给界面显示"你设过什么"用。"""
+    v = _read_config().get("target_root")
     return v if isinstance(v, str) and v.strip() else None
+
+
+def load_overrides() -> dict[str, str]:
+    r"""逐项覆盖表：`{源路径小写: 该项要用的根}`。不校验，原样返回。
+
+    键用小写：Windows 路径不区分大小写，而界面传来的大小写未必与快照里一致
+    （用户可能从别处复制粘贴）。不统一的话同一个目录会存出两条互相看不见的
+    覆盖，用户改了以为没生效。
+    """
+    raw = _read_config().get("overrides")
+    if not isinstance(raw, dict):
+        return {}
+    return {str(k).lower(): v for k, v in raw.items()
+            if isinstance(k, str) and isinstance(v, str) and v.strip()}
+
+
+def override_for(path: str) -> str | None:
+    r"""这个源路径有没有专属的根，且现在还能用。
+
+    **每次都重新校验**，理由与 `effective()` 相同：存的时候合法不代表现在合法。
+    失效时返回 None，调用方回落到全局根——静默回落是刻意的，出计划是只读操作，
+    此刻报错没有用户能采取的动作；界面另有端点告知失效状态。
+    """
+    if not path:
+        return None
+    raw = load_overrides().get(str(path).lower())
+    if not raw:
+        return None
+    res = validate(raw)
+    return res["normalized"] if res["ok"] else None
 
 
 def effective() -> str | None:
@@ -267,18 +302,65 @@ def save(raw: str | None) -> dict:
     if not res["ok"]:
         return res
 
+    # 读-改-写：直接写 {"target_root": ...} 会把 overrides 整块冲掉。
+    # 用户改一次全局根就丢掉所有逐项设置，而且无声无息。
+    payload = _read_config()
+    payload["target_root"] = res["normalized"]
+    err = _write_config(payload)
+    if err:
+        return {"ok": False, "normalized": None,
+                "errors": [err], "warnings": res["warnings"]}
+    return res
+
+
+def _write_config(payload: dict) -> dict | None:
+    """原子写整份配置。成功返回 None，失败返回一个 error dict。"""
     cfg = config_file()
-    cfg.parent.mkdir(parents=True, exist_ok=True)
-    tmp = cfg.with_suffix(".json.tmp")
-    payload = {"target_root": res["normalized"]}
     try:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        tmp = cfg.with_suffix(".json.tmp")
         # 先写临时文件再替换：直接覆盖时若中途断电，配置会变成半个 JSON，
-        # 下次启动 load_raw() 读到 ValueError 就静默回落——用户会以为设置丢了。
+        # 下次启动读到 ValueError 就静默回落——用户会以为设置丢了。
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(payload, f, ensure_ascii=False, indent=2)
         os.replace(tmp, cfg)
     except OSError as e:
+        return _err("write_failed", f"保存失败：{e}")
+    return None
+
+
+def set_override(path: str, raw: str | None) -> dict:
+    r"""给单个源路径指定专属的根。`raw` 为空则清掉这一条、回落到全局根。
+
+    校验用的是同一个 `validate()`——逐项和全局的规则必须一致，否则用户会遇到
+    "全局填这个不行、逐项填就行"这种说不通的差异。**校验不过不落盘**。
+    """
+    if not path or not str(path).strip():
         return {"ok": False, "normalized": None,
-                "errors": [_err("write_failed", f"保存失败：{e}")],
-                "warnings": res["warnings"]}
+                "errors": [_err("no_path", "没有指定要覆盖哪个目录")],
+                "warnings": []}
+
+    key = str(path).lower()
+    payload = _read_config()
+    ov = payload.get("overrides")
+    if not isinstance(ov, dict):
+        ov = {}
+
+    if raw is None or not str(raw).strip():
+        ov.pop(key, None)
+        payload["overrides"] = ov
+        err = _write_config(payload)
+        if err:
+            return {"ok": False, "normalized": None, "errors": [err], "warnings": []}
+        return {"ok": True, "normalized": None, "errors": [], "warnings": []}
+
+    res = validate(raw)
+    if not res["ok"]:
+        return res
+    ov[key] = res["normalized"]
+    payload["overrides"] = ov
+    err = _write_config(payload)
+    if err:
+        return {"ok": False, "normalized": None,
+                "errors": [err], "warnings": res["warnings"]}
     return res

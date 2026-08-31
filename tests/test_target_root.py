@@ -401,3 +401,155 @@ def test_explicit_target_root_overrides_saved(tmp_path):
     out = planner.plan_all([], target_root=str(tmp_path / "once"))
     assert out["target_root"] == str(tmp_path / "once")
     assert tr.load_raw() == str(tmp_path / "saved")
+
+
+# ── 逐项覆盖 ────────────────────────────────────────────────────────────────
+
+
+def _junctionable(path) -> dict:
+    """一条会走 junction 的记录（cat 不可清理、owner_kind=app、体积过门槛）。"""
+    return {"path": str(path), "name": "SomeApp", "size": 3 * 2**30, "files": 10,
+            "cat": "程序数据", "owner_kind": "app", "conf": 0.9,
+            "redirect": None, "owner": "SomeApp", "why": "测试用"}
+
+
+def _mk(p):
+    p.mkdir(parents=True, exist_ok=True)
+    (p / "blob").write_bytes(b"x" * 4096)
+    return p
+
+
+def test_override_beats_global_root(tmp_path, monkeypatch):
+    """为某一项单独指定的根，优先于全局根。"""
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    tr.save(str(tmp_path / "global"))
+    assert tr.set_override(str(src), str(tmp_path / "special"))["ok"]
+
+    t = planner.plan_for(_junctionable(src)).target
+    assert t and t.startswith(str(tmp_path / "special")), \
+        f"覆盖没生效，target={t}"
+
+
+def test_override_beats_explicitly_passed_root(tmp_path, monkeypatch):
+    """逐项覆盖也优先于调用方一次性传进来的根。
+
+    它是用户针对这一条做的、已落盘的决定，比"请求顺带带上的全局值"更具体。
+    """
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    assert tr.set_override(str(src), str(tmp_path / "special"))["ok"]
+
+    t = planner.plan_for(_junctionable(src),
+                         target_root=str(tmp_path / "passed")).target
+    assert t and t.startswith(str(tmp_path / "special")), \
+        f"传参盖掉了覆盖，target={t}"
+
+
+def test_plan_and_executor_resolve_the_same_target(tmp_path, monkeypatch):
+    """**出计划与执行必须解析出同一个目标。**
+
+    executor 会重新 plan_for 一遍。两边规则不一致就会出现"界面显示搬到 G、
+    实际搬到 E"——比不灵活危险得多，而且用户无从察觉。
+    """
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    tr.save(str(tmp_path / "global"))
+    tr.set_override(str(src), str(tmp_path / "special"))
+    rec = _junctionable(src)
+
+    shown = planner.plan_all([rec])["plans"][0]["target"]
+    # executor 拿到的是同一条路径、同样调 plan_for（它内部就这么做）
+    fresh = planner.plan_for(rec).target
+    assert shown == fresh, f"展示 {shown} 与执行 {fresh} 不一致"
+
+
+def test_clearing_override_falls_back_to_global(tmp_path, monkeypatch):
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    tr.save(str(tmp_path / "global"))
+    tr.set_override(str(src), str(tmp_path / "special"))
+    assert tr.set_override(str(src), None)["ok"]
+
+    t = planner.plan_for(_junctionable(src)).target
+    assert t and t.startswith(str(tmp_path / "global"))
+    assert tr.load_overrides() == {}
+
+
+def test_saving_global_root_keeps_overrides(tmp_path, monkeypatch):
+    """改全局根不能把逐项覆盖冲掉。
+
+    `save()` 原先直接写 `{"target_root": ...}`，会整块覆盖配置文件——用户改一次
+    全局根就丢掉所有逐项设置，而且无声无息。
+    """
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = tmp_path / "src" / "SomeApp"
+    tr.set_override(str(src), str(tmp_path / "special"))
+    tr.save(str(tmp_path / "another"))
+
+    assert tr.load_overrides().get(str(src).lower()) == str(tmp_path / "special"), \
+        "改全局根把覆盖表冲掉了"
+
+
+def test_override_keys_are_case_insensitive(tmp_path, monkeypatch):
+    """Windows 路径不区分大小写，键必须统一，否则同一目录会存出两条互不可见的覆盖。"""
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    tr.set_override(str(src).upper(), str(tmp_path / "special"))
+
+    t = planner.plan_for(_junctionable(src)).target
+    assert t and t.startswith(str(tmp_path / "special")), \
+        f"大小写不同就找不到覆盖，target={t}"
+
+
+def test_lookup_normalizes_keys_read_from_disk(tmp_path, monkeypatch):
+    """**读取端**也要归一化大小写，不能只靠写入端。
+
+    只测「set_override 大写、查小写」是不够的：写入端已经把键转小写了，所以
+    读取端去掉归一化照样能找到——那条测试对读取端的变异是绿的（实测确认）。
+    这里直接写一份大写键的配置，模拟手改过的、或旧版本留下的文件。
+    """
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    cfg = tr.config_file()
+    cfg.parent.mkdir(parents=True, exist_ok=True)
+    cfg.write_text(json.dumps({
+        "target_root": str(tmp_path / "global"),
+        "overrides": {str(src).upper(): str(tmp_path / "special")},
+    }, ensure_ascii=False), encoding="utf-8")
+
+    assert tr.load_overrides().get(str(src).lower()) == str(tmp_path / "special"), \
+        "磁盘上的大写键没被归一化"
+    t = planner.plan_for(_junctionable(src)).target
+    assert t and t.startswith(str(tmp_path / "special")), \
+        f"读取端没归一化，找不到覆盖，target={t}"
+
+
+def test_invalid_override_is_not_saved(tmp_path, monkeypatch):
+    """校验不过不落盘——存一个用不了的值只会在别处以更难懂的方式失败。"""
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = tmp_path / "src" / "SomeApp"
+    res = tr.set_override(str(src), r"\\NAS\share\x")   # UNC，junction 不支持
+    assert not res["ok"], "UNC 路径被接受了"
+    assert tr.load_overrides() == {}
+
+
+def test_broken_override_falls_back_silently(tmp_path, monkeypatch):
+    """存过的覆盖失效了（盘拔了、盘符变了）就回落到全局根，不抛。
+
+    出计划是只读操作，此刻报错没有用户能采取的动作。
+    """
+    monkeypatch.setattr(tr, "_drive_type", lambda root: tr.DRIVE_FIXED)
+    src = _mk(tmp_path / "src" / "SomeApp")
+    tr.save(str(tmp_path / "global"))
+    tr.set_override(str(src), str(tmp_path / "special"))
+    # 让覆盖指向的位置变成写不进去（盘拔了 / 目录没了）。
+    # 打 _probe_writable 而不是 _drive_type：后者收的是**盘符**（"C:\\"），
+    # 按路径名去判会永不匹配——第一版就是这么写的，测试假绿。
+    monkeypatch.setattr(
+        tr, "_probe_writable",
+        lambda p: (False, "盘不见了") if "special" in str(p).lower() else (True, None))
+
+    t = planner.plan_for(_junctionable(src)).target
+    assert t and t.startswith(str(tmp_path / "global")), \
+        f"失效的覆盖没有回落，target={t}"
