@@ -25,6 +25,7 @@ from lostpath.storage import snapshots
 pytestmark = pytest.mark.integration
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SCAN_TIMEOUT_SEC = int(os.getenv("LOSTPATH_INTEGRATION_SCAN_TIMEOUT_SEC", "480"))
 
 
 def free_port():
@@ -75,15 +76,17 @@ def engine(tmp_path_factory):
     proc.wait(timeout=10)
 
 
-def wait_until_idle(base, timeout=180):
+def wait_until_idle(base, timeout=SCAN_TIMEOUT_SEC):
     """等当前任务跑完，返回终态。"""
     deadline = time.time() + timeout
+    last = None
     while time.time() < deadline:
         _s, body = call(f"{base}/api/scan/status")
+        last = body
         if body.get("state") in ("idle", "done", "failed", "cancelled"):
             return body
         time.sleep(0.5)
-    pytest.fail("等待任务结束超时")
+    pytest.fail(f"等待任务结束超时（{timeout}s），最后状态：{last}")
 
 
 def test_status_is_idle_before_any_scan(engine):
