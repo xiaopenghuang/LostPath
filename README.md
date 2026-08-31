@@ -47,7 +47,7 @@
 
 ## 安装
 
-从 [Releases](https://github.com/xiaopenghuang/LostPath/releases) 下载 `LostPath Setup <版本>.exe`
+从 [Releases](https://github.com/xiaopenghuang/LostPath/releases) 下载 `LostPath.Setup.<版本>.exe`
 并运行。目标机器无需安装 Python、conda 或 Node。
 
 要求 Windows 10/11 x64。核心逻辑依赖 `winreg`、PowerShell 与 NTFS 重解析点语义，暂无跨平台

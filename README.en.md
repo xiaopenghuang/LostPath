@@ -57,7 +57,7 @@ recycle area first, and everything can be undone for 30 days.
 
 ## Installation
 
-Download `LostPath Setup <version>.exe` from
+Download `LostPath.Setup.<version>.exe` from
 [Releases](https://github.com/xiaopenghuang/LostPath/releases) and run it. The target machine needs
 no Python, conda or Node.
 
