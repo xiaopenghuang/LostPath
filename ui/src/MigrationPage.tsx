@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert, App, Button, Card, Empty, Input, Modal, Select, Spin, Statistic, Tag, Tooltip,
 } from 'antd';
-import { WarningOutlined } from '@ant-design/icons';
+import { ArrowRightOutlined, WarningOutlined } from '@ant-design/icons';
 import {
   ACTION_LABEL, BLOCKER_LABEL, checkTargetRoot, DriveInfo, executePlan, fetchDrives,
   fetchOperations, fetchPlan, fetchTargetRoot, fetchTargetRootOverrides, fmtSize,
@@ -198,6 +198,62 @@ function PlanDetail({
             </code>
           </>
         )}
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '12px 16px',
+            background: 'var(--panel2)',
+            borderRadius: 'var(--radius-md)',
+            border: '1px solid var(--line)',
+            marginTop: 12,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx3)' }}>源路径</div>
+            <code
+              className="lp-mono"
+              style={{
+                display: 'block',
+                fontSize: 'var(--fs-sm)',
+                color: 'var(--cyan)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {plan.path}
+            </code>
+          </div>
+          <ArrowRightOutlined
+            aria-hidden="true"
+            style={{ color: 'var(--accent-fg)', fontSize: 16, flexShrink: 0 }}
+          />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx3)' }}>
+              {plan.action === 'junction'
+                ? 'Junction 镜像目标'
+                : plan.action === 'cleanup'
+                  ? '回收目标'
+                  : '重定向目标'}
+            </div>
+            <code
+              className="lp-mono"
+              style={{
+                display: 'block',
+                fontSize: 'var(--fs-sm)',
+                color: 'var(--green)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+              }}
+            >
+              {plan.target || (plan.action === 'cleanup' ? '回收区（30 天可撤销）' : '自动规划')}
+            </code>
+          </div>
+        </div>
 
         <div style={{ display: 'flex', gap: 26, marginTop: 14 }}>
           <Statistic

@@ -40,17 +40,35 @@ const ContextMenuPage = lazy(VIEW_LOADERS.context_menu);
 type View = 'dashboard' | 'software' | 'uninstall' | 'disk' | 'migration' | 'recycle'
   | 'startup' | 'environment' | 'registry' | 'context_menu' | 'settings';
 
-const NAV: { key: View; label: string; icon: JSX.Element }[] = [
-  { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined /> },
-  { key: 'software', label: '软件台账', icon: <AppstoreOutlined /> },
-  { key: 'uninstall', label: '软件卸载', icon: <ToolOutlined /> },
-  { key: 'disk', label: '系统盘全景', icon: <FolderOpenOutlined /> },
-  { key: 'migration', label: '迁移中心', icon: <SwapOutlined /> },
-  { key: 'recycle', label: '回收站', icon: <DeleteOutlined /> },
-  { key: 'startup', label: '启动管理', icon: <RocketOutlined /> },
-  { key: 'environment', label: '环境变量', icon: <CodeOutlined /> },
-  { key: 'registry', label: '注册表巡检', icon: <DatabaseOutlined /> },
-  { key: 'context_menu', label: '右键管理', icon: <MenuOutlined /> },
+const NAV_GROUPS: {
+  title: string;
+  items: { key: View; label: string; icon: JSX.Element }[];
+}[] = [
+  {
+    title: '概览',
+    items: [
+      { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined /> },
+    ],
+  },
+  {
+    title: '存储与治理',
+    items: [
+      { key: 'software', label: '软件台账', icon: <AppstoreOutlined /> },
+      { key: 'migration', label: '迁移中心', icon: <SwapOutlined /> },
+      { key: 'recycle', label: '回收站', icon: <DeleteOutlined /> },
+      { key: 'disk', label: '系统盘全景', icon: <FolderOpenOutlined /> },
+      { key: 'uninstall', label: '软件卸载', icon: <ToolOutlined /> },
+    ],
+  },
+  {
+    title: '系统底层巡检',
+    items: [
+      { key: 'startup', label: '启动管理', icon: <RocketOutlined /> },
+      { key: 'environment', label: '环境变量', icon: <CodeOutlined /> },
+      { key: 'registry', label: '注册表巡检', icon: <DatabaseOutlined /> },
+      { key: 'context_menu', label: '右键管理', icon: <MenuOutlined /> },
+    ],
+  },
 ];
 
 // 与 NAV 的 label 一致：标题栏回答"我在哪"，应当和侧栏高亮的那一项同名。
@@ -86,6 +104,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [err, setErr] = useState('');
   const [refreshing, setRefreshing] = useState(false);
+  const [viewRevision, setViewRevision] = useState(0);
   // 扫描完成、回滚完成和页面首开可能同时触发刷新。只允许最后一次请求写回，
   // 否则较慢的旧响应会把刚完成操作后的新数据覆盖掉。
   const refreshSequence = useRef(0);
@@ -164,6 +183,11 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
       .finally(() => {
         if (sequence === refreshSequence.current) setRefreshing(false);
       });
+  };
+
+  const refreshCurrentView = () => {
+    setViewRevision((revision) => revision + 1);
+    refresh();
   };
 
   useEffect(() => {
@@ -303,12 +327,13 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
           overflowY: 'auto',
         }}
       >
-        {/* 品牌标识区。标题栏藏了之后左上角这块也要能拖窗口，否则窗口只有右半边
-            顶栏能拖。下面的导航按钮是独立元素，不受这个 drag 影响。 */}
-        <div
+        {/* 品牌区返回仪表盘。它必须是 no-drag，否则 Electron 会把点击当成窗口拖动。 */}
+        <button
+          type="button"
+          className="lp-brand-container"
+          onClick={() => navigate('dashboard')}
           style={{
-            display: 'flex', gap: 10, alignItems: 'center', padding: '2px 8px 18px',
-            WebkitAppRegion: 'drag',
+            WebkitAppRegion: 'no-drag',
           } as React.CSSProperties}
         >
           {/* 软件自己的 logo（ico/LostPath.png，与窗口图标、安装包图标同一份）。
@@ -329,69 +354,69 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
             <div className="lp-brand">LostPath</div>
             <div className="lp-brand-sub">Trace Manager</div>
           </div>
-        </div>
+        </button>
 
-        {NAV.map((n) => {
-          const active = view === n.key;
-          return (
-            // 用 button + aria-current 而非 div：原先图标与文字并排、文字是裸文本
-            // 节点，导航项没有可访问名——屏幕阅读器读不出来，键盘也无法聚焦切换。
-            <button
-              key={n.key}
-              type="button"
-              onClick={() => navigate(n.key)}
-              onPointerEnter={() => {
-                if (n.key in VIEW_LOADERS) {
-                  void VIEW_LOADERS[n.key as keyof typeof VIEW_LOADERS]();
-                }
-              }}
-              onFocus={() => {
-                if (n.key in VIEW_LOADERS) {
-                  void VIEW_LOADERS[n.key as keyof typeof VIEW_LOADERS]();
-                }
-              }}
-              aria-current={active ? 'page' : undefined}
-              className={`lp-nav ${active ? 'lp-nav-active' : ''}`}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 10,
-                width: '100%',
-                textAlign: 'left',
-                font: 'inherit',
-                padding: '9px 12px',
-                borderRadius: 'var(--radius-md)',
-                marginBottom: 4,
-                cursor: 'pointer',
-                fontSize: 'var(--fs-md)',
-                background: 'transparent',
-                color: active ? undefined : 'var(--tx2)',
-                border: '1px solid transparent',
-              }}
-            >
-              <span style={{ fontSize: 16, display: 'flex', alignItems: 'center' }}>{n.icon}</span>
-              <span>{n.label}</span>
-              {n.key === 'recycle' && recycleBytes > 0 && (
-                <span
+        {NAV_GROUPS.map((grp) => (
+          <div key={grp.title} style={{ marginBottom: 8 }}>
+            <div className="lp-nav-section-title">{grp.title}</div>
+            {grp.items.map((n) => {
+              const active = view === n.key;
+              return (
+                <button
+                  key={n.key}
+                  type="button"
+                  onClick={() => navigate(n.key)}
+                  onPointerEnter={() => {
+                    if (n.key in VIEW_LOADERS) {
+                      void VIEW_LOADERS[n.key as keyof typeof VIEW_LOADERS]();
+                    }
+                  }}
+                  onFocus={() => {
+                    if (n.key in VIEW_LOADERS) {
+                      void VIEW_LOADERS[n.key as keyof typeof VIEW_LOADERS]();
+                    }
+                  }}
+                  aria-current={active ? 'page' : undefined}
+                  className={`lp-nav ${active ? 'lp-nav-active' : ''}`}
                   style={{
-                    marginLeft: 'auto',
-                    fontSize: 'var(--fs-xs)',
-                    padding: '1px 6px',
-                    borderRadius: 'var(--radius-full)',
-                    // 底用 color-mix 从当前主题的 --red 现算，而不是写死一个 rgba：
-                    // 原先写死的是深色版的红，浅色主题下底色和字色会一起偏，
-                    // 结果对比度掉到 3.35。字色走 --danger-fg，见 index.css。
-                    background: 'color-mix(in srgb, var(--red) 15%, transparent)',
-                    color: 'var(--danger-fg)',
-                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    width: '100%',
+                    textAlign: 'left',
+                    font: 'inherit',
+                    padding: '8px 12px',
+                    borderRadius: 'var(--radius-md)',
+                    marginBottom: 2,
+                    cursor: 'pointer',
+                    fontSize: 'var(--fs-md)',
+                    background: 'transparent',
+                    color: active ? undefined : 'var(--tx2)',
+                    border: '1px solid transparent',
                   }}
                 >
-                  {fmtSize(recycleBytes)}
-                </span>
-              )}
-            </button>
-          );
-        })}
+                  <span style={{ fontSize: 15, display: 'flex', alignItems: 'center' }}>{n.icon}</span>
+                  <span>{n.label}</span>
+                  {n.key === 'recycle' && recycleBytes > 0 && (
+                    <span
+                      style={{
+                        marginLeft: 'auto',
+                        fontSize: 'var(--fs-xs)',
+                        padding: '1px 6px',
+                        borderRadius: 'var(--radius-full)',
+                        background: 'color-mix(in srgb, var(--red) 15%, transparent)',
+                        color: 'var(--danger-fg)',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {fmtSize(recycleBytes)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ))}
 
         <div style={{ flex: 1 }} />
 
@@ -581,27 +606,59 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
           侧栏那份成为唯一的品牌标识。
         */}
         <div
+          className="lp-top-hud"
           style={{
-            height: 40,
-            flexShrink: 0,
-            borderBottom: '1px solid var(--line)',
-            display: 'flex',
-            alignItems: 'center',
-            padding: '0 22px',
-            gap: 10,
-            // 整条作为窗口拖动区。里面的可交互元素要单独声明 no-drag，
-            // 否则点不动——目前这一条里没有可交互元素。
             WebkitAppRegion: 'drag',
-            // 桌面端右侧留出最小化/最大化/关闭三个原生控件的宽度（Windows 上
-            // 约 138px，留 146 有余量）。浏览器里没有它们，不留。
-            paddingRight: isDesktop() ? 146 : 22,
+            paddingRight: isDesktop() ? 146 : 20,
           } as React.CSSProperties}
         >
-          <span style={{
-            color: 'var(--tx)', fontSize: 'var(--fs-lg)', fontWeight: 600,
-          }}>
-            {TITLES[view]}
-          </span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ color: 'var(--tx)', fontSize: 'var(--fs-title)', fontWeight: 600 }}>
+              {TITLES[view]}
+            </span>
+            {focusedEntityName && view === 'software' && (
+              <span style={{ color: 'var(--tx3)', fontSize: 'var(--fs-sm)' }}>
+                / {focusedEntityName}
+              </span>
+            )}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              WebkitAppRegion: 'no-drag',
+            } as React.CSSProperties}
+          >
+            {env && (
+              <div className="lp-status-pill">
+                <span
+                  className="lp-status-pill-dot"
+                  style={{
+                    background: env.elevated ? 'var(--green)' : 'var(--amber)',
+                    boxShadow: env.elevated
+                      ? '0 0 6px color-mix(in srgb, var(--green) 50%, transparent)'
+                      : undefined,
+                  }}
+                />
+                <span>{env.elevated ? '管理员模式' : '标准权限'}</span>
+              </div>
+            )}
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              loading={refreshing}
+              onClick={refreshCurrentView}
+              style={{
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--panel2)',
+                border: '1px solid var(--line)',
+                color: 'var(--tx2)',
+              }}
+            >
+              刷新
+            </Button>
+          </div>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
           {err && (
@@ -618,7 +675,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
               )}
             />
           )}
-          <Suspense fallback={(
+          <Suspense key={`${view}:${viewRevision}`} fallback={(
             <div style={{ padding: '22px 26px' }} role="status" aria-busy="true">
               <Skeleton active title={{ width: 180 }} paragraph={{ rows: 6 }} />
             </div>

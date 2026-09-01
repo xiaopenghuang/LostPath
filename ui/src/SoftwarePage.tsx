@@ -857,13 +857,21 @@ export default function SoftwarePage({
                 {g.fragments.length > 0 && ` · ${g.fragments.length} 碎片`}
               </div>
             </div>
-            <div className="lp-software-row-status" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="lp-software-row-status" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
               {g.location && (
-                <Tag bordered={false} style={{ fontFamily: 'Cascadia Code, Consolas, monospace' }}>
+                <Tag
+                  bordered={false}
+                  style={{
+                    fontFamily: 'var(--font-mono)',
+                    background: 'var(--panel2)',
+                    color: 'var(--accent-fg)',
+                    fontWeight: 600,
+                  }}
+                >
                   {g.location[0]}:
                 </Tag>
               )}
-              <Tag color={st.color} bordered={false} style={{ minWidth: 74, textAlign: 'center' }}>
+              <Tag color={st.color} bordered={false} style={{ minWidth: 70, textAlign: 'center' }}>
                 {st.label}
               </Tag>
             </div>

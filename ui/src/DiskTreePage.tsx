@@ -30,44 +30,82 @@ function dotColor(n: LpNode, depth: number): string {
 }
 
 function toTreeData(items: LpNode[]): DataNode[] {
-  const conv = (n: LpNode, depth: number): DataNode => ({
-    key: n.path,
-    title: (
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, minWidth: 500 }}>
+  const rootMax = Math.max(1, ...items.map((item) => item.size ?? 0));
+  const conv = (n: LpNode, depth: number): DataNode => {
+    const size = n.size ?? 0;
+    const ratio = size === 0
+      ? 0
+      : Math.min(100, Math.max(4, Math.round((size / rootMax) * 100)));
+    return {
+      key: n.path,
+      title: (
         <span
           style={{
-            width: 8,
-            height: 8,
-            borderRadius: 4,
-            background: dotColor(n, depth),
-            // 原先是 `0 0 8px ${dotColor()}55` —— 往颜色字面量尾部拼 alpha 的
-            // 写法在改成 var() 之后失效（`var(--x)55` 不是合法颜色，整条
-            // box-shadow 被丢弃，静默无光晕）。改用 currentColor 无法覆盖此处，
-            // 故直接给固定的柔光：点本身已过 3:1，光晕纯装饰。
-            boxShadow: '0 0 6px rgba(127, 145, 180, 0.45)',
-            display: 'inline-block',
-            flexShrink: 0,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            width: '100%',
+            minWidth: 620,
+            padding: '2px 0',
           }}
-        />
-        <b className="lp-num" style={{ minWidth: 86, color: 'var(--cyan)' }}>{fmtSize(n.size)}</b>
-        <span style={{ color: depth === 0 && !n.owner ? 'var(--red)' : 'var(--tx)' }}>{n.name}</span>
-        {depth === 0 && !n.owner && <Tag color="red" bordered={false}>未归因</Tag>}
-        {depth === 0 && n.owner && n.owner !== n.name && (
-          <Tag color={KIND_COLOR[n.owner_kind ?? 'unknown']} bordered={false}>
-            {n.owner_kind === 'vendor' ? KIND_LABEL[n.owner_kind] : n.owner}
-          </Tag>
-        )}
-        {n.role && <Tag bordered={false}>{n.role}</Tag>}
-        {n.redirect && <Tag color="orange" bordered={false}>junction</Tag>}
-        {(n.children?.length ?? 0) > 0 && (
-          <span style={{ color: 'var(--tx3)', fontSize: 12 }}>+{n.children!.length} 子目录</span>
-        )}
-      </span>
-    ),
-    children: [...(n.children ?? [])]
-      .sort((a, b) => (b.size ?? 0) - (a.size ?? 0))
-      .map((c) => conv(c, depth + 1)),
-  });
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 4,
+              background: dotColor(n, depth),
+              boxShadow: `0 0 6px color-mix(in srgb, ${dotColor(n, depth)} 45%, transparent)`,
+              display: 'inline-block',
+              flexShrink: 0,
+            }}
+          />
+          <b className="lp-num" style={{ minWidth: 80, color: 'var(--cyan)', fontSize: 'var(--fs-sm)' }}>
+            {fmtSize(n.size)}
+          </b>
+          {/* 紧凑内联体积占比条 */}
+          <span
+            style={{
+              width: 54,
+              height: 4,
+              borderRadius: 2,
+              background: 'var(--line)',
+              display: 'inline-flex',
+              overflow: 'hidden',
+              flexShrink: 0,
+            }}
+          >
+            <span
+              style={{
+                width: `${ratio}%`,
+                background: 'var(--blue2)',
+                borderRadius: 2,
+              }}
+            />
+          </span>
+          <span style={{ color: depth === 0 && !n.owner ? 'var(--red)' : 'var(--tx)', fontWeight: depth === 0 ? 600 : 400 }}>
+            {n.name}
+          </span>
+          {depth === 0 && !n.owner && <Tag color="red" bordered={false}>未归因</Tag>}
+          {depth === 0 && n.owner && n.owner !== n.name && (
+            <Tag color={KIND_COLOR[n.owner_kind ?? 'unknown']} bordered={false}>
+              {n.owner_kind === 'vendor' ? KIND_LABEL[n.owner_kind] : n.owner}
+            </Tag>
+          )}
+          {n.role && <Tag bordered={false}>{n.role}</Tag>}
+          {n.redirect && <Tag color="orange" bordered={false}>junction</Tag>}
+          {(n.children?.length ?? 0) > 0 && (
+            <span style={{ color: 'var(--tx3)', fontSize: 'var(--fs-xs)', marginLeft: 'auto' }}>
+              +{n.children!.length} 子目录
+            </span>
+          )}
+        </span>
+      ),
+      children: [...(n.children ?? [])]
+        .sort((a, b) => (b.size ?? 0) - (a.size ?? 0))
+        .map((c) => conv(c, depth + 1)),
+    };
+  };
   return [...items]
     .sort((a, b) => (b.size ?? 0) - (a.size ?? 0))
     .map((it) => conv(it, 0));

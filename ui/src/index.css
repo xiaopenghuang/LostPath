@@ -244,6 +244,52 @@ body {
     margin-left: 0 !important;
   }
 }
+/* 侧栏分组标签与导航项 */
+.lp-nav-section-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--tx3);
+  padding: 14px 10px 6px;
+  user-select: none;
+}
+
+/* 现代化顶部 HUD 与毛玻璃容器 */
+.lp-top-hud {
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  position: relative;
+  z-index: 10;
+  flex-shrink: 0;
+}
+
+/* 状态指示胶囊 */
+.lp-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  color: var(--tx2);
+}
+.lp-status-pill-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
 /* 侧栏导航项与主题/设置按钮共用。它们本来就是 <button>，这里只补焦点环与过渡。 */
 .lp-nav {
   position: relative;
@@ -319,37 +365,65 @@ body,
 /* 品牌区（侧栏顶部）。
    ------------------------------------------------------------------
    这里是全应用唯一的品牌标识——原生标题栏藏了之后（见 desktop/main.js），
-   左上角只剩这一处。所以值得排得像样一点，但**不能靠特效堆**：
-   Swiss/Minimalism 的做法是靠字距、字重、对比拉出层次，不是加阴影和光效。 */
+   左上角只剩这一处。现代桌面级微晶立体质感排版： */
+.lp-brand-container {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 8px 18px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 10px;
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  appearance: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.lp-brand-container:hover {
+  background: color-mix(in srgb, var(--tx3) 8%, transparent);
+}
+.lp-brand-container:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: var(--focus-offset);
+}
+
 .lp-logo {
   position: relative;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: linear-gradient(135deg, var(--blue2), var(--blue));
-  /* 双层阴影：外圈发光给"这是个应用图标"的分量，内圈高光模拟受光面。
-     两层都很淡——深色下 0.32、浅色下 0.22，不抢内容的注意力。 */
+  background: linear-gradient(135deg, var(--blue2) 0%, var(--blue) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   box-shadow:
-    0 2px 10px rgba(47, 129, 247, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+    0 4px 14px rgba(37, 99, 235, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.lp-brand-container:hover .lp-logo {
+  transform: scale(1.04);
+  box-shadow:
+    0 6px 18px rgba(37, 99, 235, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
 }
 .lp-logo img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  /* 真 logo 是深色底的 PNG，蒙在渐变上会有底色边；缩一点并让渐变透出来，
-     看着像"图标嵌在磁贴里"而不是"图片贴在方块上" */
-  padding: 3px;
+  padding: 4px;
 }
-/* 真 logo 加载失败时才看得见的回退图标。img 在上面，盖住它。 */
 .lp-logo-fallback {
   position: absolute;
   color: #fff;
-  font-size: 17px;
+  font-size: 18px;
 }
 .lp-logo img {
   position: relative;
@@ -358,19 +432,15 @@ body,
 
 .lp-brand {
   font-weight: 700;
-  font-size: 16px;
+  font-size: var(--fs-title);
   line-height: 1.15;
-  /* 字距收紧 0.3px：无衬线体在 700 字重下默认字距偏松，收一点才像排过版。 */
-  letter-spacing: -0.3px;
-  /* 渐变描字。fallback 是纯 --tx —— 不支持 background-clip: text 的环境
-     （或高对比度模式强制取色时）仍然可读，不会变成透明的空白。 */
+  letter-spacing: -0.4px;
   color: var(--tx);
-  background: linear-gradient(100deg, var(--tx) 10%, var(--blue2) 130%);
+  background: linear-gradient(120deg, var(--tx) 20%, var(--accent-fg) 140%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
 }
-/* 高对比度模式下把渐变撤掉：那个模式的用户明确要求系统接管配色。 */
 @media (forced-colors: active) {
   .lp-brand {
     -webkit-text-fill-color: currentColor;
@@ -379,12 +449,11 @@ body,
 }
 .lp-brand-sub {
   font-size: 9.5px;
-  /* 字距放到 2px 并全大写：小字号 + 宽字距是标签式副标题的常规做法，
-     与主标题的紧字距形成对照，层次靠"疏密"而不是靠再加一个颜色。 */
-  letter-spacing: 2px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
   color: var(--tx3);
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
 /* 页面容器。
