@@ -20,6 +20,10 @@ if str(ROOT) not in sys.path:  # 允许以 engine/main.py 直接启动时找到 
     sys.path.insert(0, str(ROOT))
 
 from lostpath.storage import paths as _paths  # noqa: E402
+from lostpath.software_identity import (  # noqa: E402
+    normalize_name as norm_token,
+    normalize_publisher as norm_publisher,
+)
 
 PORTABLE_FILE = _paths.portable_config()
 
@@ -39,12 +43,6 @@ COMPONENT_HINTS = re.compile(
     r"cu(dnn|fft|blas|sparse|rand)|nvjitlink|physx| texture|纹理|材质|directx|openal|"
     r"\bres:\b|setup|bootstrapper", re.I)
 
-VENDOR_SUFFIXES = (
-    " corporation", " corp", " inc", " ltd", " co", " llc", " gmbh", " networks",
-    " technologies", " technology", " software", " systems", " interactive",
-    " entertainment", " digital", " media", " studio", " labs", " limited",
-)
-
 PORTABLE_EXE_SKIP = re.compile(
     r"unins|uninstall|setup|install|helper|crash|updater?|report|patcher|配置|卸载|修复|激活", re.I)
 
@@ -63,25 +61,6 @@ def _dword(sk, name: str) -> int | None:
         return v if isinstance(v, int) else None
     except OSError:
         return None
-
-
-def norm_publisher(p: str | None) -> str:
-    if not p:
-        return ""
-    s = p.strip().lower()
-    for suf in VENDOR_SUFFIXES:
-        if s.endswith(suf):
-            s = s[: -len(suf)]
-            break
-    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", s)
-
-
-def norm_token(s: str) -> str:
-    """归一化用于名称/痕迹匹配：去版本号、括号注记、全部符号。"""
-    s = s.lower()
-    s = re.sub(r"\((user|x64|x86|64-bit|32-bit)\)", " ", s)
-    s = re.sub(r"\d+(\.\d+)+", " ", s)
-    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", s)
 
 
 def _clean_candidate(raw: str | None) -> str | None:

@@ -59,6 +59,16 @@ def target_root_config() -> Path:
     return config_dir() / "target_root.json"
 
 
+def rules_config() -> Path:
+    """用户手动确认的路径规则。与目标位置配置分开，便于导出和恢复。"""
+    return config_dir() / "rules.json"
+
+
+def inspection_config() -> Path:
+    """自动巡检配置。只存用户偏好，不存扫描结果。"""
+    return config_dir() / "inspection.json"
+
+
 def logs_dir() -> Path:
     return data_root() / "logs"
 
@@ -77,5 +87,7 @@ def describe() -> dict[str, str]:
         "icons_dir": str(icons_dir()),
         "portable_config": str(portable_config()),
         "target_root_config": str(target_root_config()),
+        "rules_config": str(rules_config()),
+        "inspection_config": str(inspection_config()),
         "override_active": bool(os.environ.get(ENV_OVERRIDE)) and ENV_OVERRIDE,
     }

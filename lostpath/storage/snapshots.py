@@ -10,6 +10,7 @@ import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+import ntpath
 
 from . import paths
 
@@ -113,7 +114,145 @@ def archive_latest() -> Path | None:
     src = paths.latest_snapshot()
     if not src.is_file():
         return None
-    stamp = datetime.now().strftime("%Y-%m-%dT%H-%M")
+    # 秒级时间戳避免用户在一分钟内连续重扫时覆盖历史，后缀仍保留给时钟回拨等极端情况。
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
     dst = paths.snapshots_dir() / f"{stamp}.json"
+    suffix = 1
+    while dst.exists():
+        dst = paths.snapshots_dir() / f"{stamp}-{suffix}.json"
+        suffix += 1
     dst.write_bytes(src.read_bytes())
     return dst
+
+
+def _snapshot_summary(items: list[dict], meta: dict, filename: str | None = None) -> dict:
+    """把快照压成历史页需要的稳定摘要。"""
+    stats = meta.get("scan_stats") or {}
+    return {
+        "filename": filename,
+        "scanned_at": meta.get("scanned_at"),
+        "machine": meta.get("machine"),
+        "entries": len(items),
+        "total_size": sum(int(x.get("size") or 0) for x in items),
+        "total_files": stats.get("total_files"),
+        "total_dirs": stats.get("total_dirs"),
+        "denied_count": stats.get("denied_count"),
+    }
+
+
+def _read_archived(path: Path) -> tuple[list[dict], dict] | None:
+    """读一份归档快照。单份损坏不影响历史页其余数据。"""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(raw, list):
+        return raw, {"scanned_at": None, "machine": None, "schema_version": 0}
+    if not isinstance(raw, dict) or not isinstance(raw.get("items"), list):
+        return None
+    items = raw["items"]
+    if not all(isinstance(item, dict) for item in items):
+        return None
+    return items, raw
+
+
+def _record_map(items: list[dict]) -> dict[str, dict]:
+    """按 Windows 路径身份索引，大小写变化不应制造虚假的增长。"""
+    out: dict[str, dict] = {}
+    for item in items:
+        path = item.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        key = ntpath.normcase(ntpath.normpath(path)).rstrip("\\")
+        out[key] = item
+    return out
+
+
+def history_report(limit: int = 12) -> dict:
+    """返回当前快照、历史趋势和最近一次扫描的目录级变化。"""
+    limit = max(1, min(int(limit or 12), 60))
+    current_items, current_meta = load_latest()
+    current = (_snapshot_summary(current_items, current_meta, "latest.json")
+               if current_meta.get("present") else None)
+
+    archives = []
+    for p in paths.snapshots_dir().glob("*.json"):
+        if p.name.lower() == "latest.json":
+            continue
+        parsed = _read_archived(p)
+        if parsed is None:
+            continue
+        items, raw = parsed
+        meta = raw if isinstance(raw, dict) else {}
+        summary = _snapshot_summary(items, meta, p.name)
+        summary["_items"] = items
+        try:
+            summary["_mtime"] = p.stat().st_mtime
+        except OSError:
+            summary["_mtime"] = 0
+        archives.append(summary)
+    archives.sort(key=lambda x: (x.get("scanned_at") or "", x["_mtime"]), reverse=True)
+    recent = archives[:limit]
+
+    # 历史快照只在内部携带原始条目，出口前剥掉，避免 API 变成第二个数据下载端点。
+    previous = recent[0] if recent else None
+    for item in recent:
+        item.pop("_mtime", None)
+    if previous:
+        previous_items = previous.pop("_items", [])
+    else:
+        previous_items = []
+    # recent 中 previous 的引用已经被 pop，其他摘要仍需清理内部字段。
+    for item in recent:
+        item.pop("_items", None)
+
+    trend = list(reversed(recent))
+    if current:
+        trend.append(current)
+    trend = [
+        {k: v for k, v in point.items() if k in
+         {"filename", "scanned_at", "entries", "total_size", "total_files", "total_dirs"}}
+        for point in trend
+    ]
+
+    delta = None
+    gainers: list[dict] = []
+    shrinkers: list[dict] = []
+    if current and previous:
+        delta = {
+            "bytes": current["total_size"] - previous["total_size"],
+            "entries": current["entries"] - previous["entries"],
+            "scanned_at": current.get("scanned_at"),
+            "compared_to": previous.get("scanned_at"),
+        }
+        old = _record_map(previous_items)
+        new = _record_map(current_items)
+        changes = []
+        for key in set(old) | set(new):
+            before = int(old.get(key, {}).get("size") or 0)
+            after = int(new.get(key, {}).get("size") or 0)
+            if before == after:
+                continue
+            item = new.get(key) or old[key]
+            changes.append({
+                "path": item.get("path", key),
+                "name": item.get("name") or ntpath.basename(item.get("path", key)),
+                "before": before,
+                "after": after,
+                "delta": after - before,
+                "owner": item.get("owner"),
+            })
+        gainers = sorted((x for x in changes if x["delta"] > 0),
+                         key=lambda x: x["delta"], reverse=True)[:6]
+        shrinkers = sorted((x for x in changes if x["delta"] < 0),
+                           key=lambda x: x["delta"])[:6]
+
+    return {
+        "current": current,
+        "previous": {k: v for k, v in previous.items() if not k.startswith("_")} if previous else None,
+        "delta": delta,
+        "gainers": gainers,
+        "shrinkers": shrinkers,
+        "trend": trend,
+        "history_count": len(archives),
+    }

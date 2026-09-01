@@ -168,6 +168,22 @@ def test_rollback_uses_recycle_intent_when_recycled_to_was_not_written(cache_dir
     assert manifest.find(op["id"])["recycle_intent"]
 
 
+def test_planned_operation_can_recover_when_move_finished_before_crash(cache_dir):
+    """A crash after rename but before the final status write must remain recoverable."""
+    before = tree(cache_dir)
+    op = executor.execute_cleanup(record_for(cache_dir))
+    saved = manifest.find(op["id"])
+    saved["status"] = "planned"
+    saved["recycled_to"] = None
+    manifest.save(saved)
+
+    can_recover, _reason = executor.recovery_state(saved)
+    assert can_recover is True
+    executor.rollback(op["id"])
+
+    assert cache_dir.is_dir() and tree(cache_dir) == before
+
+
 def test_locked_dir_is_not_silently_copied(cache_dir, monkeypatch):
     r"""同盘改名失败（被占用）时**不许**退化成复制。
 
@@ -454,6 +470,25 @@ def test_redirect_rollback_restores_previous_value(
 
     executor.rollback(op["id"])
     assert envvar.get_user_var(TEST_VAR) == r"D:\old-location"
+
+
+def test_redirect_rollback_refuses_external_environment_change(
+        cache_dir, tmp_path, monkeypatch, clean_test_var):
+    """Recovery must not overwrite a value changed after LostPath's operation."""
+    monkeypatch.setattr(planner, "drive_free_bytes", lambda p: 500 * 2**30)
+    monkeypatch.setitem(
+        __import__("lostpath.act.redirect", fromlist=["MECHANISMS"]).MECHANISMS,
+        "TESTVAR", {"kind": "env", "var": TEST_VAR, "note": "测试用"})
+    op = executor.execute_redirect(record_for(cache_dir, redirect="TESTVAR"),
+                                   target_root=str(tmp_path / "store"))
+    envvar.set_user_var(TEST_VAR, r"G:\changed-externally")
+
+    with pytest.raises(executor.ExecutionRefused, match="其它程序修改"):
+        executor.rollback(op["id"])
+
+    assert not cache_dir.exists(), "拒绝恢复前不应先移动文件"
+    assert os.path.isdir(op["recycled_to"])
+    assert envvar.get_user_var(TEST_VAR) == r"G:\changed-externally"
 
 
 def test_rollback_restores_files_before_env(cache_dir, tmp_path, monkeypatch,

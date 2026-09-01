@@ -159,10 +159,25 @@ def pending_rollback() -> list[dict]:
     for op in list_operations():
         if op.get("status") != "done" or is_purged(op):
             continue
+        if op.get("rollback_supported") is False:
+            continue
         dst = op.get("recycled_to")
         if dst is None or os.path.exists(dst):
             out.append(op)
     return out
+
+
+def public_operation(op: dict) -> dict:
+    """返回可安全交给 UI 的操作记录，不泄露变量原值、卸载命令或注册表备份。"""
+    public = dict(op)
+    for field in (
+        "env_previous", "env_new", "registry_backup", "uninstall_command",
+        "uninstall_baseline", "uninstall_audit", "context_menu_executable",
+        "context_menu_created_keys", "context_menu_deleted_command",
+        "context_menu_backup", "context_menu_markers", "context_menu_deleted_entries",
+    ):
+        public.pop(field, None)
+    return public
 
 
 def days_left(op: dict) -> int | None:

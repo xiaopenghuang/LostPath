@@ -177,6 +177,57 @@ def execute_cleanup(record: dict, dry_run: bool = False) -> dict:
     return op
 
 
+def execute_residue_recycle(candidate: dict, parent_operation_id: str,
+                            dry_run: bool = False) -> dict:
+    """回收深度卸载审计确认过的残留目录。
+
+    候选必须由卸载审计生成，上层还会按候选 ID 再核对一次。这里仍执行系统目录、
+    盘根、目录存在性与 junction 闸门，防止页面数据过期后误动其它位置。
+    """
+    if candidate.get("action") != "recycle_directory" or not candidate.get("can_clean"):
+        raise ExecutionRefused("该残留项未获准自动清理")
+    src = candidate.get("path")
+    _guard(src)
+    if _is_junction(src):
+        raise ExecutionRefused(f"拒绝回收 junction 残留：{src}")
+
+    plan = {
+        "path": src,
+        "name": candidate.get("name") or os.path.basename(src),
+        "size": candidate.get("size"),
+        "files": candidate.get("files"),
+        "reason": candidate.get("reason"),
+        "candidate_id": candidate.get("id"),
+        "parent_operation_id": parent_operation_id,
+    }
+    op = manifest.new_operation("uninstall_residue_cleanup", plan)
+    op["rollback_supported"] = True
+    op["parent_operation_id"] = parent_operation_id
+    if dry_run:
+        op["status"] = "dry_run"
+        return op
+
+    op["recycle_intent"] = _recycle_dst(src, op)
+    manifest.save(op)
+    try:
+        dst = _move_to_recycle(src, op)
+        op["recycled_to"] = dst
+        manifest.add_step(op, f"moved_to_recycle:{dst}")
+        if os.path.exists(src):
+            raise ExecutionFailed(f"移动后源目录仍存在：{src}")
+        if not os.path.exists(dst):
+            raise ExecutionFailed(f"移动后目标不存在：{dst}")
+        op["freed"] = fsdedup.measure(dst).to_dict()
+        manifest.mark(op, "done")
+    except ExecutionFailed as exc:
+        manifest.mark(op, "failed", failure=str(exc))
+        raise
+    except Exception as exc:
+        manifest.mark(op, "failed", failure=f"{type(exc).__name__}: {exc}")
+        raise ExecutionFailed(str(exc)) from exc
+    return op
+
+
 # ------------------------------------------------------------------ 重定向
 def execute_redirect(record: dict, target_root: str | None = None,
                      dry_run: bool = False) -> dict:
@@ -365,6 +416,51 @@ def execute_junction(record: dict, target_root: str | None = None,
 
 
 # ------------------------------------------------------------------ 回滚
+def recovery_state(op: dict) -> tuple[bool, str]:
+    """Inspect the live system before offering rollback for an interrupted action."""
+    if op.get("rollback_supported") is False:
+        return False, "该操作不支持自动恢复"
+    if manifest.is_purged(op):
+        return False, "回收区数据已永久删除"
+    if op.get("status") not in {"done", "failed", "planned"}:
+        return False, f"状态为 {op.get('status')}，无需恢复"
+    if op.get("action") not in {
+        "cleanup", "redirect", "junction", "uninstall_residue_cleanup",
+    }:
+        return False, "不是文件迁移类操作"
+
+    src = op.get("source_path")
+    dst = op.get("recycled_to") or op.get("recycle_intent")
+    dst_exists = bool(dst and os.path.exists(dst))
+    source_exists = bool(src and os.path.exists(src))
+
+    if dst_exists and source_exists and not (
+        op.get("action") == "junction" and _is_junction(src)
+    ):
+        return False, "原路径已重新存在，且回收区仍有旧数据，需先人工核对"
+
+    if op.get("action") == "redirect" and op.get("env_var"):
+        current = envvar.get_user_var(op["env_var"])
+        if current != op.get("env_new"):
+            return False, "环境变量已被其它程序修改，拒绝覆盖当前值"
+        if dst_exists:
+            return True, "检测到已改环境变量和回收区数据，可恢复到操作前"
+        return True, "检测到环境变量已改，可恢复原值"
+
+    if op.get("action") == "junction":
+        target = op.get("junction_target")
+        target_exists = bool(target and os.path.isdir(target))
+        if src and _is_junction(src) and not dst_exists:
+            return False, "原位链接仍在，但原始回收副本缺失，不能自动恢复"
+        if dst_exists or target_exists:
+            return True, "检测到迁移副本或原位链接，可恢复到操作前"
+        return False, "未发现迁移产生的磁盘变化"
+
+    if dst_exists:
+        return True, "检测到回收区数据，可移回原位置"
+    return False, "未发现已搬走的数据，原路径未发生可恢复变化"
+
+
 def rollback(op_id: str) -> dict:
     """把一次操作还原到操作前。顺序与执行相反：先还文件，再还变量。
 
@@ -376,14 +472,15 @@ def rollback(op_id: str) -> dict:
     op = manifest.find(op_id)
     if not op:
         raise ExecutionRefused(f"找不到操作记录：{op_id}")
+    if op.get("rollback_supported") is False:
+        raise ExecutionRefused("该操作由软件自己的卸载器执行，不支持自动回滚")
+    if op.get("action") == "startup_disable":
+        raise ExecutionRefused("启动项操作请从启动管理页面恢复")
     if op.get("status") == "rolled_back":
         raise ExecutionRefused("该操作已经回滚过了")
-    if op.get("status") not in ("done", "failed"):
-        raise ExecutionRefused(f"状态为 {op.get('status')} 的操作不支持回滚")
-    if manifest.is_purged(op):
-        # 不能默默"成功"：那会让界面提示"已还原到原位置"而实际什么都没还回来。
-        raise ExecutionRefused(
-            f"该操作的数据已于 {op['purged_at']} 永久删除，无法还原")
+    can_recover, recovery_reason = recovery_state(op)
+    if not can_recover:
+        raise ExecutionRefused(recovery_reason)
 
     src = op.get("source_path")
     # recycle_intent 在移动前就已落盘。进程若恰好在移动完成、写回 recycled_to

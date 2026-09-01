@@ -89,6 +89,26 @@ def test_child_skipped_when_parent_executable(tree):
     assert not [p for p in out["plans"] if p["parent_path"]], "父可执行却仍出了子计划"
 
 
+def test_ignored_child_prevents_parent_from_covering_it(monkeypatch, tree):
+    """用户保留子目录时，不能因父级去重把保留规则吞掉。"""
+    parent = tree("cache")
+    child = tree("cache", "keep")
+    monkeypatch.setattr(
+        planner.rules_mod, "ignored_rule",
+        lambda path: {"path": child, "reason": "用户保留"}
+        if os.path.normcase(path) == os.path.normcase(child) else None,
+    )
+    records = [rec(parent, "cache", BIG * 2, cat="可再生缓存", children=[
+        rec(child, "keep", BIG, cat="可再生缓存"),
+    ])]
+    out = planner.plan_all(records, target_root=str(tree("target")))
+    parent_plan = [p for p in out["plans"] if p["path"] == parent][0]
+    assert not parent_plan["executable"]
+    assert any(b["code"] == "user_ignored" for b in parent_plan["blockers"])
+    child_plan = [p for p in out["plans"] if p["path"] == child][0]
+    assert any(b["code"] == "user_ignored" for b in child_plan["blockers"])
+
+
 def test_non_cleanable_child_is_not_planned(tree):
     """子目录本身不是可清理性质，不能因为父目录被拦就顺带处理它。"""
     parent = tree("Code")

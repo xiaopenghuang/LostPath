@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 from . import envvar as envvar_mod
 from . import redirect as redirect_mod
+from . import rules as rules_mod
 from . import target_root as target_root_mod
 from .. import sysdirs
 
@@ -241,6 +242,11 @@ def plan_for(record: dict, target_root: str | None = None,
     )
 
     # ---------------- 先判拦阻，拦住的不给动作 ----------------
+    ignored = rules_mod.ignored_rule(path)
+    if ignored:
+        reason = ignored.get("reason") or "用户手动标记为保留"
+        p.blockers.append(Blocker("user_ignored", f"用户规则已保留此路径：{reason}"))
+        return p
     if not path or not os.path.isdir(path):
         p.blockers.append(Blocker("missing", "目录已不存在，快照可能已过期，建议重扫"))
         return p
@@ -505,8 +511,8 @@ def _safe_name(name: str) -> str:
 def _under(path: str, base: str) -> bool:
     r"""path 是否在 base 之内。
 
-    **比较必须带上分隔符。** 裸 `startswith` 会把 `C:\Users\10\...` 判成
-    `C:\Users\1` 的子目录（实测确认），于是别的用户的目录会被按本用户的相对
+    **比较必须带上分隔符。** 裸 `startswith` 会把 `C:\Users\devuser2\...` 判成
+    `C:\Users\devuser` 的子目录（实测确认），于是别的用户的目录会被按本用户的相对
     路径去镜像，算出来的目标位置完全不对。
     """
     if not path or not base:
@@ -519,7 +525,7 @@ def _under(path: str, base: str) -> bool:
 def mirror_suffix(path: str, user_home: str | None = None) -> str:
     r"""把源路径转成"挂到目标根下面"的相对后缀，保留原有层级。
 
-        C:\Users\1\AppData\Local\ms-playwright  ->  AppData\Local\ms-playwright
+        C:\Users\devuser\AppData\Local\ms-playwright  ->  AppData\Local\ms-playwright
         C:\ProgramData\Adobe                    ->  ProgramData\Adobe
 
     配上根 `G:\1` 就得到 `G:\1\AppData\Local\ms-playwright`——新盘看起来是用户
@@ -665,6 +671,18 @@ def _dedup_child_plans(plans: list[Plan]) -> list[Plan]:
     丢弃而非保留成不可执行项，是因为"父目录已经覆盖了它"不是一条需要用户处理的
     拦阻，列出来只会让人以为还有事没做。
     """
+    # 子目录被用户明确保留时，父目录不能整块执行，否则会把这条规则覆盖掉。
+    # 把父级转成阻塞计划后，其余未被保留的子目录仍可继续单独处理。
+    protected_parents = {
+        (p.parent_path or "").lower().rstrip("\\")
+        for p in plans
+        if p.parent_path and any(b.code == "user_ignored" for b in p.blockers)
+    }
+    for p in plans:
+        if p.parent_path is None and p.path.lower().rstrip("\\") in protected_parents:
+            p.blockers.append(Blocker(
+                "user_ignored", "下面有子目录被用户规则保留，不能整块处理"))
+
     ok_parents = {p.path.lower().rstrip("\\")
                   for p in plans if p.executable and p.parent_path is None}
     return [p for p in plans

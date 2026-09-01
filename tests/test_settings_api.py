@@ -117,6 +117,59 @@ def test_recoverable_days_comes_from_manifest(engine):
     assert json.loads(raw)["recycle"]["recoverable_days"] == manifest.RECOVERABLE_DAYS
 
 
+def test_history_endpoint_is_available_without_archives(engine):
+    base, _ = engine
+    status, raw = call(f"{base}/api/history")
+    assert status == 200, raw
+    body = json.loads(raw)
+    assert body["current"]["entries"] == 0
+    assert body["previous"] is None
+    assert body["history_count"] == 0
+
+
+def test_inspection_config_roundtrip(engine):
+    base, _ = engine
+    status, raw = call(f"{base}/api/inspection")
+    assert status == 200, raw
+    assert json.loads(raw)["enabled"] is False
+
+    status, raw = call(f"{base}/api/inspection", "PUT",
+                       {"enabled": True, "interval_hours": 6})
+    assert status == 200, raw
+    body = json.loads(raw)
+    assert body["enabled"] is True
+    assert body["interval_hours"] == 6
+    assert body["due"] is True
+
+    status, raw = call(f"{base}/api/residues")
+    assert status == 200, raw
+    assert json.loads(raw)["summary"]["count"] == 0
+
+
+def test_inspection_rejects_bad_interval(engine):
+    base, _ = engine
+    status, raw = call(f"{base}/api/inspection", "PUT",
+                       {"enabled": True, "interval_hours": 5})
+    assert status == 400
+    assert "巡检间隔" in json.loads(raw)["error"]
+
+
+def test_user_ignore_rule_roundtrip(engine):
+    base, _ = engine
+    path = r"C:\Users\devuser\AppData\Local\DemoCache"
+    status, raw = call(f"{base}/api/rules/ignore", "PUT", {"path": path, "reason": "保留测试"})
+    assert status == 200, raw
+    assert json.loads(raw)["rule"]["path"] == path
+
+    status, raw = call(f"{base}/api/rules")
+    assert status == 200
+    assert json.loads(raw)["count"] == 1
+
+    status, raw = call(f"{base}/api/rules/ignore", "DELETE", {"path": path})
+    assert status == 200, raw
+    assert json.loads(raw)["ignored_paths"] == []
+
+
 @pytest.mark.parametrize("method", ["POST", "PUT", "DELETE"])
 def test_settings_is_read_only(engine, method):
     """非 GET 必须被拒。放开写入等于让界面指挥服务往任意路径写盘。"""

@@ -23,10 +23,12 @@ if not FROZEN and str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import inventory  # noqa: E402
-from lostpath.act import executor, manifest, planner  # noqa: E402
+from lostpath.act import (context_menu, environment, executor, manifest, planner,
+                          registry_health, rules, uninstall_audit, uninstaller)  # noqa: E402
 from lostpath.act import target_root as target_root_mod  # noqa: E402
 from lostpath.scan import runner  # noqa: E402
-from lostpath import sysdirs  # noqa: E402
+from lostpath import (inspection, integration_reports, parent_watch, residues,
+                      startup, sysdirs)  # noqa: E402
 from lostpath.storage import paths as lp_paths, snapshots  # noqa: E402
 
 UI_DIST = ROOT / "ui" / "dist"
@@ -108,6 +110,10 @@ def _auto_purge_expired() -> None:
         pass
 
 
+# 源码桌面壳经 conda.bat 启动时，中间有 cmd/conda 两层。终端被强制关闭后这些
+# 包装进程可能先死，Python 被重新挂到别的父进程并继续占着 8321。壳传入自己的
+# PID 后由引擎兜底观察，壳消失就退出；直接运行引擎时没有该变量，行为不变。
+parent_watch.start_from_environment()
 DATA = build_data()
 _auto_purge_expired()
 app = FastAPI(title="LostPath M2")
@@ -198,6 +204,400 @@ def api_data():
     return DATA
 
 
+@app.get("/api/software/{entity_id}/integrations")
+def api_software_integrations(entity_id: str):
+    """汇总某个软件在环境变量、Uninstall 登记和启动链路中的关系。"""
+    entities = DATA.get("software", [])
+    entity = next((item for item in entities if item.get("id") == entity_id), None)
+    if not entity:
+        return JSONResponse(status_code=404, content={"detail": "软件实体不存在"})
+
+    environment_report, registry_report, context_menu_report = integration_reports.get(
+        entities, environment.report, registry_health.report, context_menu.report)
+
+    environment_items = []
+    for item in environment_report.get("items", []):
+        relation = next((row for row in item.get("relations", [])
+                         if row.get("entity_id") == entity_id), None)
+        if relation:
+            environment_items.append({
+                "id": item.get("id"),
+                "name": item.get("name"),
+                "scope": item.get("scope"),
+                "masked": item.get("masked"),
+                "reason": relation.get("reason"),
+                "confidence": relation.get("confidence"),
+            })
+
+    registry_items = []
+    for item in registry_report.get("items", []):
+        relation = item.get("entity") or {}
+        if relation.get("entity_id") != entity_id:
+            continue
+        registry_items.append({
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "hive": item.get("hive"),
+            "scope": item.get("scope"),
+            "registry_path": item.get("registry_path"),
+            "status": item.get("status"),
+            "reason": relation.get("reason"),
+            "confidence": relation.get("confidence"),
+        })
+
+    startup_report = startup.report(entities)
+    startup_items = [{
+        "id": item.get("id"),
+        "name": item.get("name"),
+        "kind": item.get("kind"),
+        "source": item.get("source"),
+        "risk": item.get("risk"),
+        "manage": item.get("manage"),
+        "reason": item.get("owner_reason"),
+        "confidence": item.get("owner_confidence"),
+    } for item in startup_report.get("items", [])
+        if item.get("owner_id") == entity_id]
+
+    context_menu_items = []
+    for item in context_menu_report.get("items", []):
+        relation = item.get("entity") or {}
+        if relation.get("entity_id") != entity_id:
+            continue
+        context_menu_items.append({
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "kind": item.get("kind"),
+            "scope": item.get("scope"),
+            "surfaces": item.get("surfaces"),
+            "manage": item.get("manage"),
+            "reason": relation.get("reason"),
+            "confidence": relation.get("confidence"),
+        })
+
+    return {
+        "entity": {
+            "entity_id": entity.get("id"),
+            "name": entity.get("name"),
+            "publisher": entity.get("publisher"),
+            "icon": entity.get("icon"),
+            "reason": "当前软件台账实体",
+            "confidence": 1.0,
+        },
+        "environment": environment_items,
+        "registry": registry_items,
+        "startup": startup_items,
+        "context_menu": context_menu_items,
+        "startup_state": startup_report.get("state"),
+        "summary": {
+            "environment": len(environment_items),
+            "registry": len(registry_items),
+            "startup": len(startup_items),
+            "context_menu": len(context_menu_items),
+            "total": (len(environment_items) + len(registry_items) + len(startup_items)
+                      + len(context_menu_items)),
+        },
+    }
+
+
+@app.get("/api/history")
+def api_history(limit: int = 12):
+    """扫描历史与最近一次目录变化。历史文件损坏时由存储层跳过，不影响当前数据。"""
+    return snapshots.history_report(limit)
+
+
+@app.get("/api/residues")
+def api_residues():
+    """疑似卸载残留或未登记应用。只返回仍存在且达到体积门槛的应用类目录。"""
+    return residues.detect(DATA)
+
+
+@app.get("/api/startup")
+def api_startup():
+    """登录启动项、自动服务和计划任务的只读分析。"""
+    return startup.report(DATA.get("software", []))
+
+
+@app.post("/api/startup/refresh")
+def api_startup_refresh():
+    """重新采集系统集成点。采集在后台进行，不阻塞其它接口。"""
+    return startup.request_scan(DATA.get("software", []), force=True)
+
+
+class StartupActionReq(BaseModel):
+    item_id: str
+    dry_run: bool = True
+
+
+@app.post("/api/startup/disable")
+def api_startup_disable(req: StartupActionReq):
+    """禁用当前用户登录启动项。默认 dry-run，必须显式确认才修改注册表。"""
+    try:
+        return startup.disable(req.item_id, dry_run=req.dry_run)
+    except startup.StartupActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+class StartupRestoreReq(BaseModel):
+    operation_id: str
+
+
+@app.post("/api/startup/restore")
+def api_startup_restore(req: StartupRestoreReq):
+    """恢复一条由 LostPath 禁用的当前用户登录启动项。"""
+    try:
+        return startup.restore(req.operation_id)
+    except startup.StartupActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+# -------------------------------------------------------- 环境变量管理
+@app.get("/api/environment")
+def api_environment():
+    return environment.report(DATA.get("software", []))
+
+
+class EnvironmentSetReq(BaseModel):
+    name: str
+    value: str
+    expected_fingerprint: str | None = None
+    dry_run: bool = True
+
+
+@app.post("/api/environment/set")
+def api_environment_set(req: EnvironmentSetReq):
+    try:
+        result = environment.set_value(
+            req.name, req.value, req.expected_fingerprint, dry_run=req.dry_run)
+        if not req.dry_run:
+            integration_reports.invalidate()
+        return result
+    except environment.EnvironmentActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+class EnvironmentDeleteReq(BaseModel):
+    name: str
+    expected_fingerprint: str
+    dry_run: bool = True
+
+
+@app.post("/api/environment/delete")
+def api_environment_delete(req: EnvironmentDeleteReq):
+    try:
+        result = environment.delete_value(
+            req.name, req.expected_fingerprint, dry_run=req.dry_run)
+        if not req.dry_run:
+            integration_reports.invalidate()
+        return result
+    except environment.EnvironmentActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+class OperationIdReq(BaseModel):
+    operation_id: str
+
+
+@app.post("/api/environment/restore")
+def api_environment_restore(req: OperationIdReq):
+    try:
+        result = environment.restore(req.operation_id)
+        integration_reports.invalidate()
+        return result
+    except environment.EnvironmentActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+# -------------------------------------------------------- 注册表巡检
+@app.get("/api/registry-health")
+def api_registry_health():
+    return registry_health.report(DATA.get("software", []))
+
+
+class RegistryCleanupReq(BaseModel):
+    item_id: str
+    dry_run: bool = True
+
+
+@app.post("/api/registry-health/cleanup")
+def api_registry_cleanup(req: RegistryCleanupReq):
+    try:
+        result = registry_health.cleanup(req.item_id, dry_run=req.dry_run)
+        if not req.dry_run:
+            integration_reports.invalidate()
+        return result
+    except registry_health.RegistryActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+@app.post("/api/registry-health/restore")
+def api_registry_restore(req: OperationIdReq):
+    try:
+        result = registry_health.restore(req.operation_id)
+        integration_reports.invalidate()
+        return result
+    except registry_health.RegistryActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+# -------------------------------------------------------- 右键菜单管理
+@app.get("/api/context-menu")
+def api_context_menu(refresh: bool = False):
+    result = context_menu.report(DATA.get("software", []), force=refresh)
+    if refresh:
+        integration_reports.invalidate()
+    return result
+
+
+class ContextMenuActionReq(BaseModel):
+    item_id: str
+    dry_run: bool = True
+
+
+class ContextMenuCreateReq(BaseModel):
+    name: str
+    executable: str
+    surfaces: list[str]
+    dry_run: bool = True
+
+
+@app.post("/api/context-menu/create")
+def api_context_menu_create(req: ContextMenuCreateReq):
+    try:
+        result = context_menu.create_custom(
+            req.name, req.executable, req.surfaces, dry_run=req.dry_run)
+        if not req.dry_run:
+            integration_reports.invalidate()
+        return result
+    except context_menu.ContextMenuActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+@app.post("/api/context-menu/disable")
+def api_context_menu_disable(req: ContextMenuActionReq):
+    try:
+        result = context_menu.disable(req.item_id, dry_run=req.dry_run)
+        if not req.dry_run:
+            integration_reports.invalidate()
+        return result
+    except context_menu.ContextMenuActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+@app.post("/api/context-menu/delete")
+def api_context_menu_delete(req: ContextMenuActionReq):
+    try:
+        result = context_menu.remove_custom(req.item_id, dry_run=req.dry_run)
+        if not req.dry_run:
+            integration_reports.invalidate()
+        return result
+    except context_menu.ContextMenuActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+@app.post("/api/context-menu/restore")
+def api_context_menu_restore(req: OperationIdReq):
+    try:
+        result = context_menu.restore(req.operation_id)
+        integration_reports.invalidate()
+        return result
+    except context_menu.ContextMenuActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+# -------------------------------------------------------- 软件卸载
+@app.get("/api/uninstall")
+def api_uninstall():
+    return uninstaller.report(DATA.get("software", []))
+
+
+class UninstallLaunchReq(BaseModel):
+    item_id: str
+    dry_run: bool = True
+
+
+@app.post("/api/uninstall/launch")
+def api_uninstall_launch(req: UninstallLaunchReq):
+    try:
+        return uninstaller.launch(
+            req.item_id, dry_run=req.dry_run, entities=DATA.get("software", []))
+    except uninstaller.UninstallActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+@app.post("/api/uninstall/verify")
+def api_uninstall_verify(req: OperationIdReq):
+    try:
+        result = uninstaller.verify(req.operation_id)
+    except uninstaller.UninstallActionError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+    global DATA
+    DATA = build_data()
+    audit = None
+    audit_error = None
+    if result.get("verified_removed"):
+        try:
+            audit = uninstall_audit.build_audit(req.operation_id, DATA)
+        except uninstall_audit.UninstallAuditError as exc:
+            audit_error = str(exc)
+    return {
+        "result": result,
+        "catalog": uninstaller.report(DATA.get("software", [])),
+        "residues": residues.detect(DATA),
+        "audit": audit,
+        "audit_error": audit_error,
+    }
+
+
+@app.get("/api/uninstall/audit/{operation_id}")
+def api_uninstall_audit(operation_id: str):
+    try:
+        return uninstall_audit.build_audit(operation_id, DATA)
+    except uninstall_audit.UninstallAuditError as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+
+
+class UninstallDeepCleanupReq(BaseModel):
+    operation_id: str
+    candidate_ids: list[str]
+    dry_run: bool = True
+
+
+@app.post("/api/uninstall/deep-clean")
+def api_uninstall_deep_cleanup(req: UninstallDeepCleanupReq):
+    global DATA
+    try:
+        result = uninstall_audit.execute_cleanup(
+            req.operation_id, req.candidate_ids, DATA, dry_run=req.dry_run)
+    except (uninstall_audit.UninstallAuditError, executor.ExecutionRefused,
+            executor.ExecutionFailed, environment.EnvironmentActionError,
+            registry_health.RegistryActionError, startup.StartupActionError) as exc:
+        return JSONResponse(status_code=409, content={"refused": str(exc)})
+    if not req.dry_run:
+        DATA = build_data()
+        result["audit"] = uninstall_audit.build_audit(req.operation_id, DATA)
+    return result
+
+
+@app.get("/api/inspection")
+def api_inspection():
+    """自动巡检配置与是否到期。"""
+    return inspection.status()
+
+
+class InspectionReq(BaseModel):
+    enabled: bool
+    interval_hours: int
+
+
+@app.put("/api/inspection")
+def api_set_inspection(req: InspectionReq):
+    try:
+        inspection.save_config(req.enabled, req.interval_hours)
+        return inspection.status()
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+
+
 # ---------------------------------------------------------------- 深度扫描
 # 这三个端点是 P2：在此之前引擎只会读快照，而快照只能靠手工跑脚本产出，别人装上
 # 后痕迹永远是空的。扫描全程只读，唯一写动作是最后原子写快照，且覆盖前先归档留底。
@@ -226,6 +626,14 @@ def _rebuild_after_scan(job) -> None:
                 + traceback.format_exc())
         except OSError:
             pass
+
+
+def _scheduled_scan() -> None:
+    """自动巡检复用同一个扫描单例，不会与用户手动扫描并发。"""
+    try:
+        runner.start_scan(on_done=_rebuild_after_scan)
+    except runner.ScanAlreadyRunning:
+        return
 
 
 @app.post("/api/scan")
@@ -520,24 +928,75 @@ class RollbackReq(BaseModel):
 @app.post("/api/act/rollback")
 def api_act_rollback(req: RollbackReq):
     try:
-        op = executor.rollback(req.op_id)
+        recorded = manifest.find(req.op_id)
+        if recorded and recorded.get("action") == "startup_disable":
+            op = startup.restore(req.op_id)
+        elif recorded and recorded.get("action") in {
+            "context_menu_disable", "context_menu_create", "context_menu_delete",
+        }:
+            op = context_menu.restore(req.op_id)
+        elif recorded and recorded.get("action") in {"env_set", "env_delete"}:
+            op = environment.restore(req.op_id)
+        elif recorded and recorded.get("action") == "registry_cleanup":
+            op = registry_health.restore(req.op_id)
+        else:
+            op = executor.rollback(req.op_id)
     except executor.ExecutionRefused as e:
         return JSONResponse(status_code=409, content={"refused": str(e)})
+    except startup.StartupActionError as e:
+        return JSONResponse(status_code=409, content={"refused": str(e)})
+    except context_menu.ContextMenuActionError as e:
+        return JSONResponse(status_code=409, content={"refused": str(e)})
+    except environment.EnvironmentActionError as e:
+        return JSONResponse(status_code=409, content={"refused": str(e)})
+    except registry_health.RegistryActionError as e:
+        return JSONResponse(status_code=409, content={"refused": str(e)})
+    integration_reports.invalidate()
     global DATA
     DATA = build_data()
     return op
 
 
+def _operation_recovery_state(op: dict) -> tuple[bool, str]:
+    """Return a live, action-specific recovery decision for the history page."""
+    action = op.get("action")
+    try:
+        if action == "startup_disable":
+            return startup.recovery_state(op)
+        if action in {"env_set", "env_delete"}:
+            return environment.recovery_state(op)
+        if action == "registry_cleanup":
+            return registry_health.recovery_state(op)
+        if action in {
+            "context_menu_disable", "context_menu_create", "context_menu_delete",
+        }:
+            return context_menu.recovery_state(op)
+        return executor.recovery_state(op)
+    except Exception as exc:
+        # History must stay readable even when one recovery probe hits a locked key/path.
+        return False, f"恢复状态核对失败：{exc}"
+
+
 @app.get("/api/act/operations")
 def api_act_operations():
     """操作历史。用户要能随时看见"我做过什么、还能不能撤"。"""
-    ops = manifest.list_operations()
+    ops = []
+    recovery_attention = 0
+    for recorded in manifest.list_operations():
+        can_rollback, recovery_reason = _operation_recovery_state(recorded)
+        public = manifest.public_operation(recorded)
+        public["can_rollback"] = can_rollback
+        public["recovery_reason"] = recovery_reason
+        if recorded.get("status") in {"planned", "failed"} and can_rollback:
+            recovery_attention += 1
+        ops.append(public)
     entries = manifest.recycle_entries()
     return {
         "operations": ops,
         "summary": {
             "total": len(ops),
-            "rollbackable": len(manifest.pending_rollback()),
+            "rollbackable": sum(bool(op["can_rollback"]) for op in ops),
+            "recovery_attention": recovery_attention,
             "recycle_bytes": sum(e["size"] for e in entries),
         },
     }
@@ -647,6 +1106,44 @@ def api_settings():
     }
 
 
+class IgnoreRuleReq(BaseModel):
+    path: str
+    reason: str | None = None
+
+
+@app.get("/api/rules")
+def api_rules():
+    """用户规则只收紧计划，不会直接碰文件。"""
+    entries = rules.list_ignored()
+    return {
+        "ignored_paths": entries,
+        "count": len(entries),
+        "config_path": str(lp_paths.rules_config()),
+    }
+
+
+@app.put("/api/rules/ignore")
+def api_add_ignore_rule(req: IgnoreRuleReq):
+    try:
+        entry = rules.add_ignored(req.path, req.reason)
+    except ValueError as e:
+        return JSONResponse(status_code=400, content={"error": str(e)})
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"error": f"保存规则失败：{e}"})
+    return {"rule": entry, "ignored_paths": rules.list_ignored()}
+
+
+@app.delete("/api/rules/ignore")
+def api_remove_ignore_rule(req: IgnoreRuleReq):
+    try:
+        removed = rules.remove_ignored(req.path)
+    except OSError as e:
+        return JSONResponse(status_code=500, content={"error": f"删除规则失败：{e}"})
+    if not removed:
+        return JSONResponse(status_code=404, content={"error": "没有找到这条规则"})
+    return {"removed": req.path, "ignored_paths": rules.list_ignored()}
+
+
 class ScanReq(BaseModel):
     path: str
 
@@ -678,4 +1175,5 @@ if UI_DIST.is_dir():
     app.mount("/", StaticFiles(directory=UI_DIST, html=True), name="ui")
 
 if __name__ == "__main__":
+    inspection.Scheduler(_scheduled_scan).start()
     uvicorn.run(app, host="127.0.0.1", port=8321, log_level="warning")
