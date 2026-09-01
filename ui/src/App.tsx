@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
-import { Alert, App as AntdApp, Card, Skeleton, Tooltip } from 'antd';
+import { lazy, startTransition, Suspense, useEffect, useRef, useState } from 'react';
+import { Alert, App as AntdApp, Button, Card, Skeleton, Tooltip } from 'antd';
 import {
-  AppstoreOutlined, DashboardOutlined, DeleteOutlined, DesktopOutlined,
-  FolderOpenOutlined, MoonOutlined, RadarChartOutlined, SafetyCertificateOutlined,
-  SettingOutlined, SunOutlined, SwapOutlined,
+  AppstoreOutlined, CodeOutlined, DashboardOutlined, DatabaseOutlined, DeleteOutlined,
+  DesktopOutlined, FolderOpenOutlined, MoonOutlined, RadarChartOutlined, RocketOutlined,
+  SafetyCertificateOutlined, SettingOutlined, SunOutlined, SwapOutlined, ToolOutlined,
+  MenuOutlined, ReloadOutlined,
 } from '@ant-design/icons';
 import {
   fetchDrives, fetchData, fetchRecycle, fetchSettings, fmtSize,
@@ -11,22 +12,45 @@ import {
 } from './api';
 import { isDesktop, ThemeProvider, useTheme } from './theme';
 import DashboardPage from './DashboardPage';
-import SoftwarePage from './SoftwarePage';
-import DiskTreePage from './DiskTreePage';
-import MigrationPage from './MigrationPage';
-import RecyclePage from './RecyclePage';
-import SettingsPage from './SettingsPage';
+const VIEW_LOADERS = {
+  software: () => import('./SoftwarePage'),
+  disk: () => import('./DiskTreePage'),
+  migration: () => import('./MigrationPage'),
+  recycle: () => import('./RecyclePage'),
+  settings: () => import('./SettingsPage'),
+  startup: () => import('./StartupPage'),
+  environment: () => import('./EnvironmentPage'),
+  registry: () => import('./RegistryPage'),
+  uninstall: () => import('./UninstallPage'),
+  context_menu: () => import('./ContextMenuPage'),
+};
+const SoftwarePage = lazy(VIEW_LOADERS.software);
+const DiskTreePage = lazy(VIEW_LOADERS.disk);
+const MigrationPage = lazy(VIEW_LOADERS.migration);
+const RecyclePage = lazy(VIEW_LOADERS.recycle);
+const SettingsPage = lazy(VIEW_LOADERS.settings);
+const StartupPage = lazy(VIEW_LOADERS.startup);
+const EnvironmentPage = lazy(VIEW_LOADERS.environment);
+const RegistryPage = lazy(VIEW_LOADERS.registry);
+const UninstallPage = lazy(VIEW_LOADERS.uninstall);
+const ContextMenuPage = lazy(VIEW_LOADERS.context_menu);
 
 // 图谱没有独立页：它是"某个软件的关联结构"，脱离具体软件看没有意义，
 // 所以只作为软件台账详情页右栏的一块，不占侧栏入口。
-type View = 'dashboard' | 'software' | 'disk' | 'migration' | 'recycle' | 'settings';
+type View = 'dashboard' | 'software' | 'uninstall' | 'disk' | 'migration' | 'recycle'
+  | 'startup' | 'environment' | 'registry' | 'context_menu' | 'settings';
 
 const NAV: { key: View; label: string; icon: JSX.Element }[] = [
   { key: 'dashboard', label: '仪表盘', icon: <DashboardOutlined /> },
   { key: 'software', label: '软件台账', icon: <AppstoreOutlined /> },
-  { key: 'disk', label: 'C 盘全景', icon: <FolderOpenOutlined /> },
+  { key: 'uninstall', label: '软件卸载', icon: <ToolOutlined /> },
+  { key: 'disk', label: '系统盘全景', icon: <FolderOpenOutlined /> },
   { key: 'migration', label: '迁移中心', icon: <SwapOutlined /> },
   { key: 'recycle', label: '回收站', icon: <DeleteOutlined /> },
+  { key: 'startup', label: '启动管理', icon: <RocketOutlined /> },
+  { key: 'environment', label: '环境变量', icon: <CodeOutlined /> },
+  { key: 'registry', label: '注册表巡检', icon: <DatabaseOutlined /> },
+  { key: 'context_menu', label: '右键管理', icon: <MenuOutlined /> },
 ];
 
 // 与 NAV 的 label 一致：标题栏回答"我在哪"，应当和侧栏高亮的那一项同名。
@@ -35,9 +59,14 @@ const NAV: { key: View; label: string; icon: JSX.Element }[] = [
 const TITLES: Record<View, string> = {
   dashboard: '仪表盘',
   software: '软件台账',
-  disk: 'C 盘全景',
+  uninstall: '软件卸载',
+  disk: '系统盘全景',
   migration: '迁移中心',
   recycle: '回收站',
+  startup: '启动管理',
+  environment: '环境变量',
+  registry: '注册表巡检',
+  context_menu: '右键管理',
   settings: '设置',
 };
 
@@ -56,8 +85,20 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
   const [data, setData] = useState<LpData | null>(null);
   const [drives, setDrives] = useState<DriveInfo[]>([]);
   const [err, setErr] = useState('');
+  const [refreshing, setRefreshing] = useState(false);
+  // 扫描完成、回滚完成和页面首开可能同时触发刷新。只允许最后一次请求写回，
+  // 否则较慢的旧响应会把刚完成操作后的新数据覆盖掉。
+  const refreshSequence = useRef(0);
   const [view, setView] = useState<View>('dashboard');
   const [ownerId, setOwnerId] = useState<string | null>(null);
+  const [integrationFocus, setIntegrationFocus] = useState<string | null>(null);
+  const navigate = (next: View, focus: string | null = null) => startTransition(() => {
+    if (next in VIEW_LOADERS) {
+      void VIEW_LOADERS[next as keyof typeof VIEW_LOADERS]();
+    }
+    setIntegrationFocus(focus);
+    setView(next);
+  });
 
   // 回收区占用挂在侧栏徽标上：清理后"空间没真腾出来"这件事得一眼看见，
   // 否则用户会以为工具在骗他。
@@ -94,22 +135,35 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
   } | null>(null);
 
   const refresh = () => {
-    fetchData()
-      .then(setData)
-      .catch((e) => setErr(e?.message ?? String(e)));
-    fetchDrives()
-      .then(setDrives)
-      .catch(() => setDrives([]));
-    fetchRecycle()
-      .then((r) => setRecycleBytes(r.summary.total_size))
-      .catch(() => setRecycleBytes(0));
-    fetchSettings()
-      .then((s) => setEnv({
-        elevated: s.engine.elevated,
-        denied: s.snapshot.denied_count ?? 0,
-        snapElevated: s.snapshot.elevated ?? null,
-      }))
-      .catch(() => setEnv(null));
+    const sequence = ++refreshSequence.current;
+    setRefreshing(true);
+    // 四个请求彼此独立，但逐个 setState 会让整个壳连续重排多次。
+    // 一次性收集结果后更新，扫描完成时尤其明显。
+    Promise.allSettled([fetchData(), fetchDrives(), fetchRecycle(), fetchSettings()])
+      .then(([dataResult, drivesResult, recycleResult, settingsResult]) => {
+        if (sequence !== refreshSequence.current) return;
+        if (dataResult.status === 'fulfilled') {
+          setData(dataResult.value);
+          setErr('');
+        } else {
+          setErr(dataResult.reason?.message ?? String(dataResult.reason));
+        }
+        if (drivesResult.status === 'fulfilled') setDrives(drivesResult.value);
+        else setDrives([]);
+        if (recycleResult.status === 'fulfilled') setRecycleBytes(recycleResult.value.summary.total_size);
+        else setRecycleBytes(0);
+        if (settingsResult.status === 'fulfilled') {
+          const s = settingsResult.value;
+          setEnv({
+            elevated: s.engine.elevated,
+            denied: s.snapshot.denied_count ?? 0,
+            snapElevated: s.snapshot.elevated ?? null,
+          });
+        } else setEnv(null);
+      })
+      .finally(() => {
+        if (sequence === refreshSequence.current) setRefreshing(false);
+      });
   };
 
   useEffect(() => {
@@ -174,18 +228,36 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
       (g) => g.name === name || g.traces?.some((t) => t.owner === name),
     );
     setOwnerId(ent ? ent.id : null);
-    setView('software');
+    navigate('software');
     return true;
   };
 
-  if (err)
+  const openSoftware = (entityId: string) => {
+    setOwnerId(entityId);
+    navigate('software');
+  };
+
+  const focusedEntityName = integrationFocus
+    ? data?.software.find((entity) => entity.id === integrationFocus)?.name ?? null
+    : null;
+
+  if (err && !data)
     return (
       <div style={{ padding: 48 }}>
         <Alert
           type="error"
           showIcon
           message="无法连接 LostPath 本地服务"
-          description={`${err} —— 请先启动引擎：conda run -n lostpath python engine/main.py`}
+          description={`${err}。本地引擎可能仍在启动，稍后重试即可。`}
+          action={(
+            <Button
+              icon={<ReloadOutlined />}
+              loading={refreshing}
+              onClick={refresh}
+            >
+              重试连接
+            </Button>
+          )}
         />
       </div>
     );
@@ -228,6 +300,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
           display: 'flex',
           flexDirection: 'column',
           padding: '16px 12px',
+          overflowY: 'auto',
         }}
       >
         {/* 品牌标识区。标题栏藏了之后左上角这块也要能拖窗口，否则窗口只有右半边
@@ -266,7 +339,17 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
             <button
               key={n.key}
               type="button"
-              onClick={() => setView(n.key as View)}
+              onClick={() => navigate(n.key)}
+              onPointerEnter={() => {
+                if (n.key in VIEW_LOADERS) {
+                  void VIEW_LOADERS[n.key as keyof typeof VIEW_LOADERS]();
+                }
+              }}
+              onFocus={() => {
+                if (n.key in VIEW_LOADERS) {
+                  void VIEW_LOADERS[n.key as keyof typeof VIEW_LOADERS]();
+                }
+              }}
               aria-current={active ? 'page' : undefined}
               className={`lp-nav ${active ? 'lp-nav-active' : ''}`}
               style={{
@@ -345,7 +428,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
           </button>
           <button
             type="button"
-            onClick={() => setView('settings')}
+            onClick={() => navigate('settings')}
             aria-current={view === 'settings' ? 'page' : undefined}
             className={`lp-nav ${view === 'settings' ? 'lp-nav-active' : ''}`}
             style={{
@@ -462,7 +545,7 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
           <button
             type="button"
             className="lp-nav"
-            onClick={() => setView('dashboard')}
+            onClick={() => navigate('dashboard')}
             style={{
               marginTop: 6, width: '100%', display: 'flex', alignItems: 'center',
               gap: 8, justifyContent: 'center', font: 'inherit',
@@ -521,6 +604,25 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
           </span>
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          {err && (
+            <Alert
+              banner
+              type="warning"
+              showIcon
+              message="刷新失败，当前仍显示上一次成功读取的数据"
+              description={err}
+              action={(
+                <Button size="small" loading={refreshing} onClick={refresh}>
+                  重新读取
+                </Button>
+              )}
+            />
+          )}
+          <Suspense fallback={(
+            <div style={{ padding: '22px 26px' }} role="status" aria-busy="true">
+              <Skeleton active title={{ width: 180 }} paragraph={{ rows: 6 }} />
+            </div>
+          )}>
           {view === 'dashboard' && (
             <DashboardPage
               data={data}
@@ -528,9 +630,9 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
               elevated={!!env?.elevated}
               onOpenEntity={(id) => {
                 setOwnerId(id);
-                setView('software');
+                navigate('software');
               }}
-              onGoto={setView}
+              onGoto={navigate}
               onRefresh={refresh}
             />
           )}
@@ -541,14 +643,45 @@ function InnerApp({ theme, toggleTheme }: { theme: 'dark' | 'light'; toggleTheme
               onSelect={setOwnerId}
               onRefresh={refresh}
               theme={theme}
-              onGotoMigration={() => setView('migration')}
+              onGotoMigration={() => navigate('migration')}
+              onGotoIntegration={(next, entityId) => navigate(next, entityId)}
             />
           )}
-          {view === 'disk' && <DiskTreePage data={data} onOpenOwner={openOwner} />}
+          {view === 'disk' && <DiskTreePage data={data} onOpenOwner={openOwner} onRulesChanged={refresh} />}
           {/* 计划由 /api/plan 只读算出，不复用 data —— 拦阻判定要查磁盘实况 */}
           {view === 'migration' && <MigrationPage onRefresh={refresh} />}
           {view === 'recycle' && <RecyclePage onRefresh={refresh} />}
+          {view === 'startup' && (
+            <StartupPage
+              focusEntityId={integrationFocus}
+              focusEntityName={focusedEntityName}
+              onOpenSoftware={openSoftware}
+            />
+          )}
+          {view === 'environment' && (
+            <EnvironmentPage
+              focusEntityId={integrationFocus}
+              focusEntityName={focusedEntityName}
+              onOpenSoftware={openSoftware}
+            />
+          )}
+          {view === 'registry' && (
+            <RegistryPage
+              focusEntityId={integrationFocus}
+              focusEntityName={focusedEntityName}
+              onOpenSoftware={openSoftware}
+            />
+          )}
+          {view === 'context_menu' && (
+            <ContextMenuPage
+              focusEntityId={integrationFocus}
+              focusEntityName={focusedEntityName}
+              onOpenSoftware={openSoftware}
+            />
+          )}
+          {view === 'uninstall' && <UninstallPage onOpenSoftware={openSoftware} />}
           {view === 'settings' && <SettingsPage />}
+          </Suspense>
         </div>
       </div>
     </div>

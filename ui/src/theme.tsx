@@ -12,6 +12,7 @@ declare global {
     lostpath?: {
       isDesktop: boolean;
       setTitleBarTheme: (name: ThemeName) => void;
+      pickExecutable: () => Promise<string | null>;
     };
   }
 }

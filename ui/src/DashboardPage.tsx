@@ -1,7 +1,11 @@
+import { useEffect, useState } from 'react';
 import { Alert, Button, Card, Progress, Tooltip } from 'antd';
-import { RadarChartOutlined, RocketOutlined } from '@ant-design/icons';
-import { fmtSize, DriveInfo, LpData, SoftwareEntity } from './api';
-import { AppTile } from './SoftwarePage';
+import { ArrowDownOutlined, ArrowUpOutlined, HistoryOutlined, RadarChartOutlined, RocketOutlined, WarningOutlined } from '@ant-design/icons';
+import {
+  fetchHistory, fetchResidues, fmtSize, DriveInfo, HistoryReport, LpData,
+  ResidueReport, SoftwareEntity,
+} from './api';
+import { AppTile } from './SoftwareShared';
 import { Scan, useScan } from './useScan';
 
 /**
@@ -236,6 +240,114 @@ function SegmentedDriveBar({
   );
 }
 
+function HistoryCard({ report }: { report: HistoryReport }) {
+  if (!report.current) {
+    return (
+      <Card size="small" className="lp-card-elevated" style={{ marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--tx)' }}>
+          <HistoryOutlined />
+          <b>增长雷达</b>
+        </div>
+        <div style={{ marginTop: 10, fontSize: 'var(--fs-sm)', color: 'var(--tx2)' }}>
+          完成第一次扫描后，这里会记录空间变化和增长最快的目录。
+        </div>
+      </Card>
+    );
+  }
+
+  const delta = report.delta?.bytes ?? 0;
+  const deltaColor = delta > 0 ? 'var(--red)' : delta < 0 ? 'var(--green)' : 'var(--tx2)';
+  const trendMax = Math.max(...report.trend.map((x) => x.total_size), 1);
+  const changes = [...report.gainers, ...report.shrinkers].slice(0, 5);
+  return (
+    <Card size="small" className="lp-card-elevated" style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <HistoryOutlined style={{ color: 'var(--accent-fg)' }} />
+        <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)' }}>增长雷达</span>
+        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-xs)', color: 'var(--tx3)' }}>
+          {report.history_count} 次历史扫描
+        </span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginTop: 10 }}>
+        <span className="lp-num" style={{ fontSize: 24, fontWeight: 700, color: 'var(--tx)' }}>
+          {fmtSize(report.current.total_size)}
+        </span>
+        {report.delta ? (
+          <span className="lp-num" style={{ color: deltaColor, fontSize: 'var(--fs-sm)', fontWeight: 600 }}>
+            {delta > 0 ? <ArrowUpOutlined /> : delta < 0 ? <ArrowDownOutlined /> : null}{' '}
+            {delta > 0 ? '+' : ''}{fmtSize(delta)}
+          </span>
+        ) : (
+          <span style={{ color: 'var(--tx2)', fontSize: 'var(--fs-sm)' }}>等待下一次扫描对比</span>
+        )}
+      </div>
+      <div role="img" style={{ display: 'flex', alignItems: 'end', gap: 4, height: 44, marginTop: 10 }} aria-label="历史占用趋势">
+        {report.trend.map((point) => (
+          <Tooltip key={`${point.filename}-${point.scanned_at}`} title={`${point.scanned_at ? new Date(point.scanned_at).toLocaleString() : '早期快照'} · ${fmtSize(point.total_size)}`}>
+            <div style={{ flex: 1, minWidth: 4, height: `${Math.max(8, (point.total_size / trendMax) * 100)}%`, background: 'var(--cyan)', opacity: 0.75, borderRadius: 'var(--radius-xs)' }} />
+          </Tooltip>
+        ))}
+      </div>
+      {changes.length > 0 && (
+        <div style={{ marginTop: 12, borderTop: '1px solid var(--line)', paddingTop: 8 }}>
+          <div style={{ color: 'var(--tx2)', fontSize: 'var(--fs-xs)', marginBottom: 5 }}>最近变化最大的目录</div>
+          {changes.map((item) => (
+            <div key={item.path} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', minWidth: 0 }}>
+              <span style={{ color: item.delta > 0 ? 'var(--red)' : 'var(--green)', width: 14, flexShrink: 0 }}>
+                {item.delta > 0 ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
+              </span>
+              <code className="lp-mono" style={{ flex: 1, minWidth: 0, overflow: 'hidden', whiteSpace: 'nowrap', textOverflow: 'ellipsis', color: 'var(--tx2)', fontSize: 'var(--fs-xs)' }} title={item.path}>
+                {item.name}
+              </code>
+              <span className="lp-num" style={{ color: item.delta > 0 ? 'var(--red)' : 'var(--green)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>
+                {item.delta > 0 ? '+' : ''}{fmtSize(item.delta)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ResidueCard({ report, onGoto }: { report: ResidueReport; onGoto: () => void }) {
+  if (!report.candidates.length) return null;
+  return (
+    <Card size="small" className="lp-card-elevated" style={{ marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <WarningOutlined style={{ color: 'var(--amber)', fontSize: 16 }} />
+        <span style={{ fontSize: 'var(--fs-md)', fontWeight: 600, color: 'var(--tx)' }}>
+          疑似残留 / 未登记应用
+        </span>
+        <span style={{ color: 'var(--tx2)', fontSize: 'var(--fs-sm)' }}>
+          {report.summary.count} 个软件 · {fmtSize(report.summary.total_size)}
+        </span>
+        <Button type="link" size="small" style={{ marginLeft: 'auto' }} onClick={onGoto}>
+          查看 系统盘全景
+        </Button>
+      </div>
+      <div style={{ marginTop: 8, color: 'var(--tx2)', fontSize: 'var(--fs-xs)' }}>
+        这些目录仍然存在，但当前软件台账里没有对应登记，可能是卸载残留，也可能是便携或未登记应用。这里只做提示，不会自动删除。
+      </div>
+      <div style={{ marginTop: 9 }}>
+        {report.candidates.slice(0, 5).map((item) => (
+          <div key={item.owner} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '4px 0', minWidth: 0 }}>
+            <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--tx)' }}>
+              {item.owner}
+            </span>
+            <code className="lp-mono" title={item.paths[0]} style={{ maxWidth: '42%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--tx3)', fontSize: 'var(--fs-xs)' }}>
+              {item.paths[0]}
+            </code>
+            <span className="lp-num" style={{ color: 'var(--amber)', fontSize: 'var(--fs-xs)', flexShrink: 0 }}>
+              {fmtSize(item.size)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 export default function DashboardPage({
   data,
   drives,
@@ -253,7 +365,24 @@ export default function DashboardPage({
   elevated: boolean;
 }) {
   const scan = useScan(onRefresh);
+  const [history, setHistory] = useState<HistoryReport | null>(null);
+  const [residues, setResidues] = useState<ResidueReport | null>(null);
   const s = data.summary;
+  useEffect(() => {
+    let dropped = false;
+    Promise.all([fetchHistory(), fetchResidues()])
+      .then(([nextHistory, nextResidues]) => {
+        if (dropped) return;
+        setHistory(nextHistory);
+        setResidues(nextResidues);
+      })
+      .catch(() => {
+        if (dropped) return;
+        setHistory(null);
+        setResidues(null);
+      });
+    return () => { dropped = true; };
+  }, [data.snapshot.scanned_at]);
   // 快照时间戳后端给的是 UTC ISO，按本地时区显示
   const scannedAt = data.snapshot?.scanned_at
     ? new Date(data.snapshot.scanned_at).toLocaleString()
@@ -321,6 +450,9 @@ export default function DashboardPage({
           }
         />
       )}
+
+      {history && <HistoryCard report={history} />}
+      {residues && <ResidueCard report={residues} onGoto={() => onGoto('disk')} />}
 
       <div style={{ display: 'flex', gap: 14, marginBottom: 14 }}>
         <Card size="small" className="lp-card-elevated" style={{ flex: 1 }}>

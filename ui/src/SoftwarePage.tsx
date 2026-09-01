@@ -1,166 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from 'react';
 import {
   Alert, App, Button, Card, Checkbox, Empty, Input, List, Modal, Progress, Segmented, Space,
-  Table, Tag, Tooltip, Tree, Typography,
+  Pagination, Table, Tag, Tooltip, Tree, Typography,
 } from 'antd';
 import {
-  ApiOutlined, CheckCircleFilled, HddOutlined, LoadingOutlined, MinusCircleFilled,
-  PartitionOutlined, SearchOutlined, SortDescendingOutlined,
+  ApiOutlined, CheckCircleFilled, CodeOutlined, DatabaseOutlined, HddOutlined,
+  LoadingOutlined, MenuOutlined, MinusCircleFilled, PartitionOutlined, RocketOutlined, SearchOutlined,
+  SortDescendingOutlined,
 } from '@ant-design/icons';
 import type { DataNode } from 'antd/es/tree';
 import {
   ACTION_LABEL, BLOCKER_LABEL, CAT_COLOR, confirmPortable, entityStatus, fetchBodyTree, fetchPlan,
-  fmtSize, LpData, LpNode, Plan, scanPortable, SoftwareEntity, SOURCE_LABEL, ZONE_LABEL,
+  fetchSoftwareIntegrations, fmtSize, LpData, LpNode, Plan, scanPortable, SoftwareEntity,
+  SoftwareIntegrationItem, SoftwareIntegrationsReport, SOURCE_LABEL, ZONE_LABEL,
 } from './api';
-import EntityGraph from './EntityGraph';
+import { AppTile, EvidenceBlock } from './SoftwareShared';
 import { Scan, useScan } from './useScan';
 
-const pct = (c?: number | null) => (c == null ? '—' : `${Math.round(c * 100)}%`);
+// G6 本身超过 1 MB。台账列表不需要它，只有打开软件详情时才下载和初始化。
+const EntityGraph = lazy(() => import('./EntityGraph'));
 
-/**
- * 依据软件名称哈希生成稳定色相，让没有真图标的软件之间仍能靠颜色区分。
- *
- * **只返回色相，不返回亮度。** 亮度由 --tile-fg-l 按主题钉死（见 index.css）：
- * hsl 的 L 是数学亮度而非感知亮度，同一个 L 在黄色（h≈60）和蓝紫（h≈240）下
- * 实际明暗差一倍。原先写死 L=60% 时扫过 360 个色相：深色下 160 个不过 4.5:1
- * （最差 h=240 只有 2.62），浅色下 360 个全不过（最差 1.12，基本看不见）。
- * 而首页"占用大户"6 项当前一个真图标都没有，全靠这个回退显示。
- */
-function getTileHue(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  return Math.abs(hash) % 360;
-}
-
-/** 软件图标：优先真实图标（引擎从 exe 提取的 PNG），加载失败回退首字母。 */
-export function AppTile({ e, size }: { e: SoftwareEntity; size: number }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [e.icon]);
-
-  const hue = useMemo(() => getTileHue(e.name || 'App'), [e.name]);
-  const initial = (e.name?.[0] || '?').toUpperCase();
-
-  return (
-    <div
-      style={{
-        position: 'relative',
-        width: size,
-        height: size,
-        borderRadius: Math.round(size * 0.28),
-        background: 'var(--panel2)',
-        border: '1px solid var(--line)',
-        boxShadow: 'var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.06)',
-        display: 'grid',
-        placeItems: 'center',
-        fontSize: Math.round(size * 0.42),
-        fontWeight: 700,
-        flexShrink: 0,
-        overflow: 'hidden',
-        userSelect: 'none',
-      }}
-    >
-      {/* 图标缺失或提取失败时的首字母微质感回退。
-          饱和度与亮度走 --tile-fg-s / --tile-fg-l，两个主题各一套；色相是唯一
-          随软件名变化的量，所以对比度不会随数据浮动。 */}
-      <span
-        style={{
-          display: 'grid',
-          placeItems: 'center',
-          width: '100%',
-          height: '100%',
-          background: `hsla(${hue}, 40%, 50%, 0.12)`,
-          color: `hsl(${hue}, var(--tile-fg-s), var(--tile-fg-l))`,
-          letterSpacing: -0.5,
-        }}
-      >
-        {initial}
-      </span>
-      {e.icon && !failed && (
-        <img
-          src={e.icon}
-          alt=""
-          onError={() => setFailed(true)}
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-            padding: Math.round(size * 0.12),
-            background: 'var(--panel2)',
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-export function EvidenceBlock({ node }: { node: LpNode }) {
-  const kids = [...(node.children ?? [])].sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
-  return (
-    <div
-      style={{
-        padding: '10px 14px',
-        background: 'var(--bg)',
-        borderLeft: '2px solid rgba(47,129,247,0.55)',
-        borderRadius: 6,
-      }}
-    >
-      <div style={{ marginBottom: 6 }}>
-        <b>判定：</b>
-        {node.why || '—'}（置信度 {pct(node.conf)}）
-        {node.family && <Tag style={{ marginLeft: 8 }} bordered={false}>族系 {node.family}</Tag>}
-      </div>
-      {(node.evidence ?? []).length > 0 && (
-        <div style={{ marginBottom: 8 }}>
-          <b>证据链：</b>
-          {(node.evidence ?? []).map((ev, i) => (
-            <div key={i} style={{ margin: '3px 0' }}>
-              <Tag color="blue" bordered={false}>{ev.source}</Tag>
-              {ev.detail} <Tag bordered={false}>{pct(ev.conf)}</Tag>
-            </div>
-          ))}
-        </div>
-      )}
-      {node.redirect && (
-        <Alert
-          type="warning"
-          showIcon
-          style={{ marginBottom: 8 }}
-          message={`junction 重定向 → ${node.redirect}（体积已去重，不计两次）`}
-        />
-      )}
-      {kids.length > 0 && (
-        <>
-          <b>构成（子目录 {kids.length} 项）：</b>
-          <Table<LpNode>
-            size="small"
-            rowKey="path"
-            pagination={false}
-            style={{ marginTop: 4 }}
-            dataSource={kids.slice(0, 12)}
-            columns={[
-              { title: '大小', width: 100, render: (_, k) => <b className="lp-num" style={{ color: 'var(--cyan)' }}>{fmtSize(k.size)}</b> },
-              { title: '子目录', render: (_, k) => <code className="lp-mono" style={{ fontSize: 12 }}>{k.path}</code> },
-              { title: '说明', width: 240, render: (_, k) => k.role || k.why || '' },
-            ]}
-            // 没有省略项时**必须返回 undefined 而不是空字符串**：返回 '' 时 antd
-            // 照样渲染一个空的 .ant-table-footer 容器，表格下方多出一截空条
-            // （浅色主题下它还是纯黑，因为 footerBg 同样吃那个 transparent 派生，
-            // 见 theme.tsx）。子目录不足 12 项时这里本来就不该有 footer。
-            footer={
-              kids.length > 12
-                ? () => `其余 ${kids.length - 12} 项更小的子目录未列出`
-                : undefined
-            }
-          />
-        </>
-      )}
-    </div>
-  );
-}
+const pct = (confidence?: number | null) => (
+  confidence == null ? '—' : `${Math.round(confidence * 100)}%`
+);
 
 const treeToAntd = (n: BodyTreeNode): DataNode => ({
   key: n.path,
@@ -413,7 +275,129 @@ function ActionabilityCard({
   );
 }
 
-function EntityDetail({ e, onBack, plans, planErr, theme, scan, onGotoMigration }: {
+type IntegrationView = 'startup' | 'environment' | 'registry' | 'context_menu';
+
+function SystemIntegrationsCard({
+  entity,
+  onOpen,
+}: {
+  entity: SoftwareEntity;
+  onOpen: (view: IntegrationView, entityId: string) => void;
+}) {
+  const [report, setReport] = useState<SoftwareIntegrationsReport | null>(null);
+  const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let dropped = false;
+    let timer: number | undefined;
+    setReport(null);
+    setError('');
+    const load = async () => {
+      try {
+        const next = await fetchSoftwareIntegrations(entity.id);
+        if (dropped) return;
+        setReport(next);
+        setError('');
+        if (next.startup_state === 'loading') timer = window.setTimeout(load, 900);
+      } catch (err) {
+        if (!dropped) setError(err instanceof Error ? err.message : '系统关联读取失败');
+      }
+    };
+    void load();
+    return () => {
+      dropped = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [entity.id, reloadKey]);
+
+  const sections = report ? [
+    {
+      key: 'registry' as const,
+      label: '注册表登记',
+      icon: <DatabaseOutlined />,
+      items: report.registry,
+      detail: (item: SoftwareIntegrationItem) => item.registry_path || item.reason,
+    },
+    {
+      key: 'environment' as const,
+      label: '环境变量',
+      icon: <CodeOutlined />,
+      items: report.environment,
+      detail: (item: SoftwareIntegrationItem) => item.reason,
+    },
+    {
+      key: 'startup' as const,
+      label: '启动链路',
+      icon: <RocketOutlined />,
+      items: report.startup,
+      detail: (item: SoftwareIntegrationItem) => `${item.source || ''} · ${item.reason}`,
+    },
+    {
+      key: 'context_menu' as const,
+      label: '右键菜单',
+      icon: <MenuOutlined />,
+      items: report.context_menu,
+      detail: (item: SoftwareIntegrationItem) => (
+        `${item.surfaces?.map((surface) => surface.name).join('、') || ''} · ${item.reason}`
+      ),
+    },
+  ] : [];
+
+  return (
+    <Card
+      size="small"
+      title={<Space size={8}><ApiOutlined style={{ color: 'var(--accent-fg)' }} />系统关联</Space>}
+    >
+      {!report && !error && <Space><LoadingOutlined />正在核对注册表、变量、启动链路和右键菜单…</Space>}
+      {error && (
+        <Alert
+          type="warning"
+          showIcon
+          message="系统关联读取失败"
+          description={error}
+          action={<Button size="small" onClick={() => setReloadKey((value) => value + 1)}>重试</Button>}
+        />
+      )}
+      {report && sections.map((section) => (
+        <div key={section.key} style={{ padding: '8px 0', borderBottom: '1px solid var(--line)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ color: 'var(--accent-fg)', display: 'flex' }}>{section.icon}</span>
+            <b style={{ color: 'var(--tx)', flex: 1 }}>{section.label}</b>
+            <Tag bordered={false}>{section.items.length}</Tag>
+            {section.items.length > 0 && (
+              <Button size="small" type="link" onClick={() => onOpen(section.key, entity.id)}>
+                查看管理
+              </Button>
+            )}
+          </div>
+          {section.items.slice(0, 3).map((item) => (
+            <div key={item.id} style={{ marginTop: 5, paddingLeft: 24, minWidth: 0 }}>
+              <div style={{ color: 'var(--tx2)', fontSize: 12 }}>{item.name}</div>
+              <div style={{ color: 'var(--tx3)', fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={section.detail(item)}>
+                {section.detail(item)}
+              </div>
+            </div>
+          ))}
+          {section.items.length === 0 && (
+            <div style={{ paddingLeft: 24, color: 'var(--tx3)', fontSize: 11.5 }}>
+              {section.key === 'startup' && report.startup_state === 'loading' ? '仍在读取系统启动项' : '未发现可靠关联'}
+            </div>
+          )}
+        </div>
+      ))}
+      {report && report.summary.total === 0 && report.startup_state !== 'loading' && (
+        <div style={{ marginTop: 8, color: 'var(--tx3)', fontSize: 11.5 }}>
+          当前没有足够证据把系统登记关联到该软件。
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function EntityDetail({
+  e, onBack, plans, planErr, theme, scan, onGotoMigration, onGotoIntegration,
+}: {
   e: SoftwareEntity;
   onBack: () => void;
   /** path → 计划。null 表示还在算 */
@@ -422,6 +406,7 @@ function EntityDetail({ e, onBack, plans, planErr, theme, scan, onGotoMigration 
   theme: 'dark' | 'light';
   scan: Scan;
   onGotoMigration: () => void;
+  onGotoIntegration: (view: IntegrationView, entityId: string) => void;
 }) {
   const traces = [...(e.traces ?? [])].sort((a, b) => (b.size ?? 0) - (a.size ?? 0));
   const st = entityStatus(e, plans);
@@ -459,7 +444,7 @@ function EntityDetail({ e, onBack, plans, planErr, theme, scan, onGotoMigration 
             loading={scan.starting || scan.busy}
             onClick={scan.askBegin}
           >
-            {scan.busy ? '扫描中…' : '重新扫描 C 盘'}
+            {scan.busy ? '扫描中…' : '重新扫描 系统盘'}
           </Button>
         </Tooltip>
       </div>
@@ -468,9 +453,9 @@ function EntityDetail({ e, onBack, plans, planErr, theme, scan, onGotoMigration 
       <div className="lp-split">
         <div style={{ flex: 1.9, minWidth: 0 }}>
           <BodyCard e={e} />
-          <Card size="small" title={`C 盘痕迹（${traces.length} 处 · ${fmtSize(e.traces_size ?? 0)}）`}>
+          <Card size="small" title={`系统盘痕迹（${traces.length} 处 · ${fmtSize(e.traces_size ?? 0)}）`}>
             {traces.length === 0 ? (
-              <Alert type="success" showIcon={false} message="C 盘没有归因到该软件的显著足迹" />
+              <Alert type="success" showIcon={false} message="系统盘没有归因到该软件的显著足迹" />
             ) : (
               traces.map((t) => {
                 const ev = (t.evidence ?? [])[0];
@@ -526,17 +511,24 @@ function EntityDetail({ e, onBack, plans, planErr, theme, scan, onGotoMigration 
 
         {/* 右栏：图谱 + 可处理性 */}
         <div style={{ flex: 1.1, display: 'flex', flexDirection: 'column', gap: 12, minWidth: 300 }}>
+          <SystemIntegrationsCard entity={e} onOpen={onGotoIntegration} />
           <Card
             size="small"
             title={<Space size={8}><PartitionOutlined style={{ color: 'var(--accent-fg)' }} />关联图谱</Space>}
             styles={{ body: { padding: 6 } }}
           >
-            <EntityGraph entity={e} theme={theme} height={320} />
+            <Suspense fallback={(
+              <div style={{ height: 320, display: 'grid', placeItems: 'center' }} role="status" aria-busy="true">
+                <Space><LoadingOutlined />正在加载图谱组件…</Space>
+              </div>
+            )}>
+              <EntityGraph entity={e} theme={theme} height={320} />
+            </Suspense>
             <div style={{
               fontSize: 'var(--fs-xs)', color: 'var(--tx3)', padding: '4px 6px 2px',
               lineHeight: 1.6,
             }}>
-              中心 = 本软件 · 内环 = 本体 / C 盘痕迹 · 外环 = 子目录
+              中心 = 本软件 · 内环 = 本体 / 系统盘痕迹 · 外环 = 子目录
               <br />
               圆与线宽 ∝ 占用 · 颜色 = 定性 · 悬停高亮 · 可拖拽缩放
             </div>
@@ -672,6 +664,7 @@ export default function SoftwarePage({
   onRefresh,
   theme,
   onGotoMigration,
+  onGotoIntegration,
 }: {
   data: LpData;
   owner: string | null;
@@ -679,8 +672,12 @@ export default function SoftwarePage({
   onRefresh: () => void;
   theme: 'dark' | 'light';
   onGotoMigration: () => void;
+  onGotoIntegration: (view: IntegrationView, entityId: string) => void;
 }) {
   const [q, setQ] = useState('');
+  const deferredQ = useDeferredValue(q);
+  const [page, setPage] = useState(1);
+  const pageSize = 40;
   const scan = useScan(onRefresh);
   /**
    * 排序方式。
@@ -715,9 +712,10 @@ export default function SoftwarePage({
     };
   }, [data]);
   const [modalOpen, setModalOpen] = useState(false);
+  useEffect(() => setPage(1), [q, sort]);
   const barMax = useMemo(() => maxTrace(data), [data]);
   const groups = useMemo(() => {
-    const kw = q.trim().toLowerCase();
+    const kw = deferredQ.trim().toLowerCase();
     const hit = !kw
       ? data.software
       : data.software.filter(
@@ -752,7 +750,11 @@ export default function SoftwarePage({
       out.sort((a, b) => (b.traces_size ?? 0) - (a.traces_size ?? 0));
     }
     return out;
-  }, [data, q, sort, plans]);
+  }, [data, deferredQ, sort, plans]);
+  const pageGroups = useMemo(
+    () => groups.slice((page - 1) * pageSize, page * pageSize),
+    [groups, page],
+  );
 
   if (owner) {
     const e = data.software.find((g) => g.id === owner);
@@ -766,6 +768,7 @@ export default function SoftwarePage({
           theme={theme}
           scan={scan}
           onGotoMigration={onGotoMigration}
+          onGotoIntegration={onGotoIntegration}
         />
       );
   }
@@ -800,7 +803,7 @@ export default function SoftwarePage({
       </div>
 
       {groups.length === 0 && <Empty description="没有匹配的软件" />}
-      {groups.map((g) => {
+      {pageGroups.map((g) => {
         const st = entityStatus(g, plans);
         const barPct = Math.round(((g.traces_size ?? 0) / barMax) * 100);
         const active = g.id === current?.id;
@@ -813,7 +816,7 @@ export default function SoftwarePage({
             type="button"
             onClick={() => onSelect(g.id)}
             aria-current={active ? 'true' : undefined}
-            className="lp-item"
+            className="lp-item lp-software-row"
             style={{
               alignItems: 'center',
               gap: 14,
@@ -825,7 +828,7 @@ export default function SoftwarePage({
             }}
           >
             <AppTile e={g} size={36} />
-            <div style={{ width: 300, minWidth: 0 }}>
+            <div className="lp-software-row-main" style={{ width: 300, minWidth: 0 }}>
               <div style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
                 <Typography.Text strong ellipsis style={{ maxWidth: 220, color: 'var(--tx)' }}>
                   {g.name}
@@ -846,15 +849,15 @@ export default function SoftwarePage({
                 {g.location ?? '本体未定位'}
               </code>
             </div>
-            <div style={{ width: 220 }}>
+            <div className="lp-software-row-meter" style={{ width: 220 }}>
               <Progress percent={barPct} showInfo={false} size={['100%', 4]} strokeColor="var(--blue)" />
               <div style={{ fontSize: 10.5, color: 'var(--tx3)', marginTop: -2 }}>
-                C 盘痕迹 {fmtSize(g.traces_size)}
+                系统盘痕迹 {fmtSize(g.traces_size)}
                 {(g.traces?.length ?? 0) > 0 && ` · ${g.traces!.length} 处`}
                 {g.fragments.length > 0 && ` · ${g.fragments.length} 碎片`}
               </div>
             </div>
-            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div className="lp-software-row-status" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
               {g.location && (
                 <Tag bordered={false} style={{ fontFamily: 'Cascadia Code, Consolas, monospace' }}>
                   {g.location[0]}:
@@ -867,6 +870,19 @@ export default function SoftwarePage({
           </button>
         );
       })}
+
+      {groups.length > pageSize && (
+        <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 4px' }}>
+          <Pagination
+            current={page}
+            pageSize={pageSize}
+            total={groups.length}
+            showSizeChanger={false}
+            showQuickJumper={groups.length > pageSize * 4}
+            onChange={setPage}
+          />
+        </div>
+      )}
 
       <PortableModal open={modalOpen} onClose={() => setModalOpen(false)} onConfirmed={onRefresh} />
     </div>

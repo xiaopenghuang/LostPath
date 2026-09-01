@@ -12,7 +12,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-325%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-465%20passing-brightgreen)
 
 **中文** · [English](README.en.md)
 
@@ -38,6 +38,15 @@
   缓存，最后才是跨盘迁移 + junction。
 - **30 天可撤销** — 执行前写入回滚清单，删除的数据移入回收区而非直接删除；环境变量原值一并
   记录，撤销时还原。
+- **增长雷达** — 保存每次扫描的历史快照，展示系统盘占用趋势、最近一次增减和增长最快的目录。
+- **用户保留规则** — 在磁盘全景中把目录标记为保留，后续计划会自动跳过该目录及其子目录，规则可在设置中取消。
+- **自动巡检** — 可按 6、12、24 或 72 小时触发只读扫描，持续更新增长雷达。
+- **残留与未登记应用提示** — 找出仍存在但已不在当前软件台账中的应用痕迹，给出证据和置信度，不会自动删除。
+- **启动管理** — 读取登录启动项、系统服务和计划任务，按执行文件位置、解析完整度与当前状态给出提示并关联软件台账。当前用户的登录启动项可直接禁用和恢复，原值存入独立注册表备份区并写入操作记录；系统服务与计划任务保持只读。
+- **环境变量管理** — 同屏查看当前用户与系统级变量，敏感值默认隐藏；当前用户变量可新增、修改、删除并从操作记录撤销，系统级变量保持只读。
+- **注册表巡检** — 检查 Windows 软件卸载登记，只把安装目录与卸载器均已消失的当前用户登记列为可清理，删除前完整备份注册表键并支持恢复。
+- **右键管理** — 枚举资源管理器的菜单命令和 COM 扩展处理器，按目标文件关联软件台账。第三方菜单可通过当前用户级标记禁用并恢复；也可选择任意 exe，为文件、文件夹、空白处或磁盘创建当前用户级自定义菜单，参数自动生成，删除前整键备份。原命令、CLSID 与程序文件不会删除，Windows 核心项保持只读。
+- **智能深度卸载** — 调用软件自身登记的原生卸载器，卸载前记录文件、注册表、环境变量与启动链路关系，完成后按差异生成残留报告。高置信度项目可逐项确认清理，目录进入回收区、注册表整键备份、变量与登录启动均可撤销；服务和计划任务保持只读。
 - **迁移目标位置可自定义** — 默认自动选择非系统盘中可用空间最大的一个。
 - **明确的拒绝清单** — 正在运行、已是重解析点、系统归属、置信度不足、目标盘容量不够等情况
   一律不处理，并逐条给出原因。
@@ -98,7 +107,7 @@ LOSTPATH_PY=/d/conda/envs/lostpath/python.exe sh tools/build-release.sh
 | 层 | 技术 |
 |---|---|
 | 归因引擎 | Python 3.12 |
-| 本地服务 | FastAPI + uvicorn（`127.0.0.1:8321`，19 个 JSON 端点）|
+| 本地服务 | FastAPI + uvicorn（`127.0.0.1:8321`，仅本机 API）|
 | 界面 | React 18 + TypeScript 5 + Vite + Ant Design + AntV G6 |
 | 桌面外壳 | Electron 33 |
 | 打包 | PyInstaller + electron-builder (NSIS) |
@@ -110,11 +119,12 @@ lostpath/
   scan/         目录枚举与证据采集
   attribute/    归因引擎与知识库
   act/          计划器（只读）与执行器
+  startup.py    启动项、服务与计划任务分析
   storage/      快照与路径解析
 engine/         FastAPI 服务与软件台账
 ui/             前端
 desktop/        Electron 外壳
-tests/          325 项测试与脱敏基准数据
+tests/          503 项测试与脱敏基准数据（含 35 项集成测试）
 ```
 
 ## 数据位置
@@ -122,9 +132,9 @@ tests/          325 项测试与脱敏基准数据
 全部位于 `%LOCALAPPDATA%\LostPath\`：
 
 ```
-snapshots/   扫描快照        operations/  回滚台账
-recycle/     回收区（30 天）  icons/       图标缓存
-config/      用户设置        logs/
+  snapshots/   扫描快照与历史   operations/  回滚台账
+  recycle/     回收区（30 天）  icons/       图标缓存
+  config/      用户设置与规则  logs/
 ```
 
 不写入安装目录（`Program Files` 下非管理员无写权限），也不使用 Roaming（快照描述本机磁盘

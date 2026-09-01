@@ -11,7 +11,7 @@ import {
 /**
  * 回收站。
  *
- * 这一页存在的理由：用户点了"清理缓存"，界面说腾出 2.23 GiB，但 C 盘可用空间一点没变
+ * 这一页存在的理由：用户点了"清理缓存"，界面说腾出 2.23 GiB，但 系统盘可用空间一点没变
  * ——数据只是被移进了回收区。不让他看见里面有什么、也不给腾空的入口，那个"已腾出"就是
  * 句空话。所以这里既要显示"还没真腾出来"，也要给出真腾出来的办法。
  */
@@ -153,7 +153,7 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
             type="warning"
             showIcon
             style={{ marginBottom: 14 }}
-            message={`这里的 ${fmtSize(s.total_size)} 还占着 C 盘`}
+            message={`这里的 ${fmtSize(s.total_size)} 还占着 系统盘`}
             description={
               <span style={{ fontSize: 12.5 }}>
                 清理操作只是把数据移到了回收区，磁盘空间并没有真正释放——这样才能撤销。

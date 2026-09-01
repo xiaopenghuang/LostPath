@@ -10,6 +10,7 @@ import {
   rollbackOperation, saveTargetRoot, setTargetRootOverride,
   TargetRootCheck, TargetRootInfo,
 } from './api';
+import HistoryPanel from './HistoryPanel';
 
 const ACTION_COLOR: Record<string, string> = {
   redirect: 'cyan',
@@ -53,27 +54,37 @@ function OperationHistory({
   onRollback: (op: Operation) => void;
 }) {
   if (!report.operations.length) return null;
+  const interrupted = report.summary.recovery_attention ?? 0;
   return (
-    <Card
-      size="small"
+    <HistoryPanel
+      title="操作历史"
+      items={report.operations}
+      itemKey={(op) => op.id}
+      pageSize={5}
+      defaultExpanded={interrupted > 0}
       style={{ marginTop: 14 }}
-      title={`操作历史 · ${report.summary.total} 条`}
-      extra={
+      headerExtra={
         report.summary.recycle_bytes > 0 ? (
           <span style={{ fontSize: 12, color: 'var(--tx3)' }}>
-            回收区占用 {fmtSize(report.summary.recycle_bytes)}（回收期内不会真删）
+            回收区 {fmtSize(report.summary.recycle_bytes)}
           </span>
         ) : null
       }
-    >
-      {report.operations.slice(0, 12).map((op) => {
+      beforeRows={interrupted > 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 10 }}
+          message={`发现 ${interrupted} 条中断后仍有系统变化的操作`}
+          description="LostPath 已核对当前磁盘和注册表状态。只有现场仍与操作记录一致的项目才提供恢复，不会盲目覆盖后来产生的新数据。"
+        />
+      ) : null}
+      renderItem={(op) => {
         const st = OP_STATUS_LABEL[op.status] ?? { text: op.status, color: 'default' };
         // 数据已永久删除的不给撤销按钮：点了只会被后端拒绝，白给一次失败
-        const canRollback =
-          (op.status === 'done' || op.status === 'failed') && !op.purged_at;
+        const canRollback = op.can_rollback === true;
         return (
           <div
-            key={op.id}
             style={{
               display: 'flex', alignItems: 'center', gap: 10, padding: '9px 11px',
               border: '1px solid var(--line)', borderRadius: 8, marginBottom: 6,
@@ -98,17 +109,24 @@ function OperationHistory({
               {op.failure && (
                 <div style={{ fontSize: 11, color: 'var(--red)' }}>{op.failure}</div>
               )}
+              {op.recovery_reason && op.status !== 'done' && (
+                <div style={{ fontSize: 11, color: canRollback ? 'var(--amber)' : 'var(--tx3)' }}>
+                  {op.recovery_reason}
+                </div>
+              )}
             </div>
             <Tag color={op.purged_at ? 'default' : st.color} bordered={false}>
               {op.purged_at ? '已永久删除' : st.text}
             </Tag>
             {canRollback && (
-              <Button size="small" onClick={() => onRollback(op)}>撤销</Button>
+              <Button size="small" onClick={() => onRollback(op)}>
+                {op.status === 'planned' || op.status === 'failed' ? '恢复现场' : '撤销'}
+              </Button>
             )}
           </div>
         );
-      })}
-    </Card>
+      }}
+    />
   );
 }
 
@@ -725,7 +743,7 @@ export default function MigrationPage({ onRefresh }: { onRefresh?: () => void })
       <Card size="small" style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', gap: 44, flexWrap: 'wrap' }}>
           <Statistic
-            title={<span style={{ fontSize: 11.5, color: 'var(--tx3)' }}>可腾出 C 盘空间</span>}
+            title={<span style={{ fontSize: 11.5, color: 'var(--tx3)' }}>可腾出 系统盘空间</span>}
             value={fmtSize(s.reclaimable)}
             valueStyle={{ fontSize: 27, fontWeight: 700, color: 'var(--green)' }}
           />

@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
-import { Alert, Drawer, Tag, Tree } from 'antd';
+import { useEffect, useMemo, useState } from 'react';
+import { Alert, App as AntdApp, Button, Drawer, Popconfirm, Tag, Tree } from 'antd';
 import type { DataNode } from 'antd/es/tree';
-import { CAT_COLOR, fmtSize, KIND_COLOR, KIND_LABEL, LpData, LpNode } from './api';
-import { EvidenceBlock } from './SoftwarePage';
+import { CAT_COLOR, fmtSize, ignorePath, KIND_COLOR, KIND_LABEL, LpData, LpNode } from './api';
+import { EvidenceBlock } from './SoftwareShared';
 
 /**
  * 定性 → 状态点颜色。
@@ -76,10 +76,13 @@ function toTreeData(items: LpNode[]): DataNode[] {
 export default function DiskTreePage({
   data,
   onOpenOwner,
+  onRulesChanged,
 }: {
   data: LpData;
   onOpenOwner: (name?: string | null) => boolean;
+  onRulesChanged?: () => void;
 }) {
+  const { message } = AntdApp.useApp();
   const treeData = useMemo(() => toTreeData(data.items), [data]);
   const pathIndex = useMemo(() => {
     const m = new Map<string, LpNode>();
@@ -91,6 +94,12 @@ export default function DiskTreePage({
     return m;
   }, [data]);
   const [picked, setPicked] = useState<LpNode | null>(null);
+  const [treeHeight, setTreeHeight] = useState(() => Math.max(320, window.innerHeight - 190));
+  useEffect(() => {
+    const resize = () => setTreeHeight(Math.max(320, window.innerHeight - 190));
+    window.addEventListener('resize', resize);
+    return () => window.removeEventListener('resize', resize);
+  }, []);
 
   return (
     <div style={{ padding: 16, height: '100%', overflowY: 'auto' }}>
@@ -98,10 +107,12 @@ export default function DiskTreePage({
         style={{ marginBottom: 12 }}
         type="info"
         showIcon={false}
-        message="按体积降序排列。点击已归因目录可跳转至对应软件；红色标记为未归因目录，绿色标记为可再生缓存。"
+        message="按体积降序排列。选择目录可查看证据、所属软件或添加保留规则；红色标记为未归因目录，绿色标记为可再生缓存。"
       />
       <Tree
         blockNode
+        height={treeHeight}
+        virtual
         defaultExpandedKeys={[data.items[0]?.path].filter(Boolean) as string[]}
         treeData={treeData}
         onSelect={(keys) => {
@@ -109,12 +120,49 @@ export default function DiskTreePage({
           if (!path) return;
           const node = pathIndex.get(path);
           if (!node) return;
-          if (node.owner) onOpenOwner(node.owner);
-          else setPicked(node);
+          setPicked(node);
         }}
       />
       <Drawer open={!!picked} onClose={() => setPicked(null)} width={560} title={picked?.path}>
-        {picked && <EvidenceBlock node={picked} />}
+        {picked && (
+          <>
+            <EvidenceBlock node={picked} />
+            <div style={{ marginTop: 16, paddingTop: 12, borderTop: '1px solid var(--line)', display: 'flex', alignItems: 'center', gap: 10 }}>
+              {picked.owner && (
+                <Button
+                  size="small"
+                  type="primary"
+                  onClick={() => {
+                    if (onOpenOwner(picked.owner)) setPicked(null);
+                  }}
+                >
+                  查看所属软件
+                </Button>
+              )}
+              <Popconfirm
+                title="保留这条路径？"
+                description="它和下面的子目录将不再进入清理或迁移计划。"
+                okText="保留"
+                cancelText="取消"
+                onConfirm={async () => {
+                  try {
+                    await ignorePath(picked.path, '用户在磁盘全景中手动保留');
+                    message.success('已保留此路径，下一次出计划时生效');
+                    onRulesChanged?.();
+                    setPicked(null);
+                  } catch (e) {
+                    message.error(e instanceof Error ? e.message : '保存规则失败');
+                  }
+                }}
+              >
+                <Button size="small">保留此路径</Button>
+              </Popconfirm>
+              <span style={{ color: 'var(--tx3)', fontSize: 'var(--fs-xs)' }}>
+                规则只阻止后续操作，不会修改现有文件
+              </span>
+            </div>
+          </>
+        )}
       </Drawer>
     </div>
   );

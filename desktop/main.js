@@ -9,8 +9,8 @@ const path = require('path');
 
 // 引擎有两种形态：
 //   打包后 —— 与本文件同级 resources/ 下的 lostpath-engine.exe，目标机器不需要 Python；
-//   开发时 —— 仓库里的 dist/lostpath-engine.exe（先跑 tools/engine.spec 打出来），
-//             没有它则回退到 conda 环境里的解释器直接跑源码。
+//   开发时 —— 优先用 conda 环境直接跑源码，保证改完后启动脚本能立即看到最新代码；
+//             只有打包应用才使用冻结 exe。
 // 刻意不读环境变量来决定 spawn 什么 —— 让外部值决定被执行的程序会引入程序选择/选项注入。
 const CONFIG = {
   // 只有"源码开发模式"才会用到 conda（见 resolveEngine 的第三级退路）。默认取 PATH
@@ -215,16 +215,26 @@ function iconPath() {
   return undefined;
 }
 
-/** 依次找：打包产物 → 开发机上打出的 exe → conda 跑源码。返回 [程序, 参数, cwd]。 */
+/** 找引擎。开发壳优先跑源码，打包壳只使用随安装包带来的冻结 exe。 */
 function resolveEngine() {
   const packaged = path.join(process.resourcesPath || __dirname, 'lostpath-engine.exe');
-  if (fs.existsSync(packaged)) return [packaged, [], path.dirname(packaged)];
-
   const devExe = path.join(CONFIG.projectRoot, 'dist', 'lostpath-engine.exe');
-  if (fs.existsSync(devExe)) return [devExe, [], CONFIG.projectRoot];
+  if (app.isPackaged && fs.existsSync(packaged)) {
+    return [packaged, [], path.dirname(packaged)];
+  }
 
-  // 最后的退路：开发机上还没打包时直接跑源码。别人机器上这条走不通，
-  // 走不通也没关系——那种机器上一定有前两条里的 exe。
+  if (!app.isPackaged) {
+    // 开发时 dist/lostpath-engine.exe 是旧快照，优先它会让源码改动静默不生效。
+    // 直接跑源码还会读取刚构建的 ui/dist，适合「启动 LostPath.bat」的开发流程。
+    return [
+      CONFIG.condaExe,
+      ['run', '--no-capture-output', '-n', CONFIG.condaEnv, 'python', 'engine/main.py'],
+      CONFIG.projectRoot,
+    ];
+  }
+
+  // 仅保留给未找到打包资源的开发壳或损坏的安装包，方便排障。
+  if (fs.existsSync(devExe)) return [devExe, [], CONFIG.projectRoot];
   return [
     CONFIG.condaExe,
     ['run', '--no-capture-output', '-n', CONFIG.condaEnv, 'python', 'engine/main.py'],
@@ -255,7 +265,17 @@ function startEngine() {
   const [exe, args, cwd] = resolveEngine();
   // windowsHide：引擎是 GUI 子系统程序（runw.exe），正常不弹窗；但开发时回退到
   // conda 跑源码那条路走的是控制台程序，不加这个会闪一个黑框。
-  return spawn(exe, args, { cwd, stdio: 'ignore', windowsHide: true });
+  // Windows 的 conda 通常是 conda.bat，Node 不带 shell 时会直接报 ENOENT；参数是
+  // 本文件固定生成的，开启 shell 只用于这条开发启动路径，不改变打包 exe 的执行方式。
+  const condaSource = args[0] === 'run' && args.includes('engine/main.py');
+  return spawn(exe, args, {
+    cwd, stdio: 'ignore', windowsHide: true,
+    shell: process.platform === 'win32' && condaSource,
+    // conda.bat 会在 Electron 与 Python 之间插入 cmd/conda 包装层。外层终端被
+    // 强制关闭时，包装层可能先死而 Python 变成孤儿。引擎观察真正的桌面壳 PID，
+    // 壳没了就自行退出；直接运行引擎时没有这个变量，不受影响。
+    env: { ...process.env, LOSTPATH_PARENT_PID: String(process.pid) },
+  });
 }
 
 /**
@@ -391,17 +411,37 @@ function killEngine() {
   // 不是我起的就不动它。`engine` 为 null 时本来也会 return，但把判据写出来
   // 更清楚：这是一条**故意不做的事**，不是恰好没做。
   if (!ownsEngine || !engine) return;
+  // 先摘所有权，避免 before-quit / window-all-closed / SIGINT 连续到达时重复
+  // taskkill 同一个进程树。保存局部句柄供下面完成本次清理。
+  const ownedEngine = engine;
+  ownsEngine = false;
+  engine = null;
   try {
     if (process.platform === 'win32') {
       // /T 连子进程（conda run 下的 python）一起杀
-      spawn('taskkill', ['/pid', String(engine.pid), '/T', '/F'], { stdio: 'ignore' });
+      spawn('taskkill', ['/pid', String(ownedEngine.pid), '/T', '/F'], { stdio: 'ignore' });
     } else {
-      engine.kill();
+      ownedEngine.kill();
     }
   } catch {
     /* 忽略 */
   }
 }
+
+// 从启动批处理按 Ctrl+C、终端被关闭，或外层任务发送终止信号时，Electron 不一定
+// 走 window-all-closed。没有这两条，开发壳退了而 conda 下的 Python 仍占着 8321，
+// 下次启动会复用那个旧引擎，表现成“代码改了但界面没变化”。
+let signalShutdown = false;
+function shutdownFromSignal() {
+  if (signalShutdown) return;
+  signalShutdown = true;
+  killEngine();
+  app.quit();
+  // taskkill 是异步进程。留一个短兜底窗口，让它有机会结束整个 conda 子进程树。
+  setTimeout(() => app.exit(0), 700);
+}
+process.on('SIGINT', shutdownFromSignal);
+process.on('SIGTERM', shutdownFromSignal);
 
 /**
  * 抢单实例锁，**拿不到时重试几次再放弃**。
@@ -494,7 +534,7 @@ function start() {
 
     // 切主题时同步窗口控件配色。渲染进程只能送 'dark' / 'light' 两个字面量
     // （preload 已挡），这里再校验一次并且只认自己那个窗口发来的消息。
-    const { ipcMain } = require('electron');
+    const { dialog, ipcMain } = require('electron');
 
     /**
      * **不提供"点一下自动提权"。** 这是撤掉一次实现之后的决定，理由记在这里，
@@ -530,6 +570,19 @@ function start() {
         // 某些 Windows 版本上 setTitleBarOverlay 可能不可用，配色不同步
         // 不值得让窗口崩掉
       }
+    });
+
+    ipcMain.handle('lp:pick-executable', async (event) => {
+      if (!win || win.isDestroyed() || event.sender !== win.webContents) return null;
+      const result = await dialog.showOpenDialog(win, {
+        title: '选择右键菜单要启动的程序',
+        properties: ['openFile'],
+        filters: [
+          { name: 'Windows 程序', extensions: ['exe'] },
+          { name: '所有文件', extensions: ['*'] },
+        ],
+      });
+      return result.canceled ? null : (result.filePaths[0] || null);
     });
 
     /**

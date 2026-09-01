@@ -224,6 +224,26 @@ body {
   outline: var(--focus-ring);
   outline-offset: var(--focus-offset);
 }
+
+/* 软件台账行在最小桌面窗口下改为两层，不让固定 300px + 220px 把状态挤出可视区。 */
+@media (max-width: 1199px) {
+  .lp-software-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+  .lp-software-row-main {
+    width: auto !important;
+  }
+  .lp-software-row-meter {
+    grid-column: 2 / 4;
+    width: auto !important;
+  }
+  .lp-software-row-status {
+    grid-column: 3;
+    grid-row: 1;
+    margin-left: 0 !important;
+  }
+}
 /* 侧栏导航项与主题/设置按钮共用。它们本来就是 <button>，这里只补焦点环与过渡。 */
 .lp-nav {
   position: relative;
@@ -553,3 +573,16 @@ body,
   outline-offset: var(--focus-offset);
 }
 
+/* 审计历史默认折叠，展开后由 HistoryPanel 分页。它保留完整恢复入口，但不会随着
+   操作次数增长把功能页越撑越长。 */
+.lp-history-panel {
+  background: var(--panel);
+  border-color: var(--line);
+  box-shadow: var(--shadow-card), var(--inset-card-glow);
+}
+.lp-history-panel > .ant-collapse-item {
+  border-bottom: 0;
+}
+.lp-history-panel .ant-collapse-header {
+  align-items: center !important;
+}

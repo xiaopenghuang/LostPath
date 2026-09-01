@@ -12,7 +12,7 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![Electron](https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-325%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-465%20passing-brightgreen)
 
 [中文](README.md) · **English**
 
@@ -127,7 +127,7 @@ lostpath/
 engine/         FastAPI service and software ledger
 ui/             frontend
 desktop/        Electron shell
-tests/          325 tests and redacted benchmark data
+tests/          503 tests and redacted benchmark data, including 35 integration tests
 ```
 
 ## Data location

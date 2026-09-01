@@ -1,6 +1,6 @@
 {
   "name": "lostpath-desktop",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "description": "LostPath — 把 C 盘占用归因到具体软件，并给出可撤销的处理方案",
   "author": "LostPath",

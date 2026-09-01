@@ -1,9 +1,10 @@
-// 设置页。全只读——数据位置由 LOSTPATH_DATA_DIR 决定，做成可写入口等于让界面
-// 指挥服务往任意路径写盘。这里的价值是"把运行事实摊开"：数据在哪、上次扫描什么
-// 时候、回收期还剩多久、有没有盲区。原先它是个 disabled 的侧栏项。
+// 设置页。系统路径与运行事实保持只读，用户规则单独提供可撤销的保留入口。
 import { useEffect, useState } from 'react';
-import { Alert, Button, Card, Spin, Tag, Typography } from 'antd';
-import { fetchSettings, fmtSize, SettingsReport } from './api';
+import { Alert, App as AntdApp, Button, Card, Select, Spin, Switch, Tag, Typography } from 'antd';
+import {
+  fetchInspection, fetchRules, fetchSettings, fmtSize, InspectionReport,
+  removeIgnorePath, RulesReport, saveInspection, SettingsReport,
+} from './api';
 
 const { Paragraph } = Typography;
 
@@ -94,14 +95,105 @@ function DeniedList({ paths, total, elevated }: {
   );
 }
 
+function IgnoredRules({ report, onChanged }: { report: RulesReport | null; onChanged: (next: RulesReport) => void }) {
+  const { message } = AntdApp.useApp();
+  if (!report) return null;
+  return (
+    <Card size="small" title={`用户保留规则 · ${report.count} 条`} style={{ marginBottom: 12 }}>
+      <div style={{ color: 'var(--tx2)', fontSize: 'var(--fs-sm)', marginBottom: 10 }}>
+        被保留的路径不会进入清理或迁移计划，规则只收紧操作，不会删除任何文件。可在 系统盘全景中选中目录后添加。
+      </div>
+      {!report.ignored_paths.length ? (
+        <div style={{ color: 'var(--tx3)', fontSize: 'var(--fs-sm)' }}>还没有手动保留的路径。</div>
+      ) : (
+        report.ignored_paths.map((rule) => (
+          <div key={rule.path} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '7px 0', borderTop: '1px solid var(--line)' }}>
+            <code className="lp-mono" title={rule.path} style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--tx2)', fontSize: 11 }}>
+              {rule.path}
+            </code>
+            <Button
+              size="small"
+              onClick={async () => {
+                try {
+                  await removeIgnorePath(rule.path);
+                  onChanged({ ...report, ignored_paths: report.ignored_paths.filter((x) => x.path !== rule.path), count: report.count - 1 });
+                  message.success('已取消保留，下一次出计划时生效');
+                } catch (e) {
+                  message.error(e instanceof Error ? e.message : '取消规则失败');
+                }
+              }}
+            >
+              取消保留
+            </Button>
+          </div>
+        ))
+      )}
+    </Card>
+  );
+}
+
+function InspectionCard({ report, onChanged }: {
+  report: InspectionReport | null;
+  onChanged: (next: InspectionReport) => void;
+}) {
+  const { message } = AntdApp.useApp();
+  const [saving, setSaving] = useState(false);
+  if (!report) return null;
+  const scanned = report.last_scanned_at
+    ? new Date(report.last_scanned_at).toLocaleString('zh-CN')
+    : '还没有扫描记录';
+  const update = async (enabled: boolean, interval = report.interval_hours) => {
+    setSaving(true);
+    try {
+      onChanged(await saveInspection(enabled, interval));
+      message.success(
+        interval !== report.interval_hours
+          ? '巡检间隔已保存'
+          : enabled ? '自动巡检已开启' : '自动巡检已关闭',
+      );
+    } catch (e) {
+      message.error(e instanceof Error ? e.message : '保存巡检设置失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <Card size="small" title="自动巡检" style={{ marginBottom: 12 }}>
+      <Row
+        label="定期扫描"
+        value={<Switch checked={report.enabled} loading={saving} onChange={(v) => update(v)} />}
+        hint="LostPath 运行期间按间隔触发只读扫描，发现空间增长后可在增长雷达查看。"
+      />
+      <Row
+        label="扫描间隔"
+        value={(
+          <Select
+            size="small"
+            value={report.interval_hours}
+            disabled={saving}
+            style={{ width: 120 }}
+            onChange={(v) => update(report.enabled, v)}
+            options={[6, 12, 24, 72].map((hours) => ({ value: hours, label: `${hours} 小时` }))}
+          />
+        )}
+        hint={`上次扫描：${scanned}${report.due ? '，已到下一次巡检时间' : ''}`}
+      />
+    </Card>
+  );
+}
+
 export default function SettingsPage() {
   const [s, setS] = useState<SettingsReport | null>(null);
+  const [rules, setRules] = useState<RulesReport | null>(null);
+  const [inspection, setInspection] = useState<InspectionReport | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     fetchSettings()
       .then(setS)
       .catch((e) => setErr(e instanceof Error ? e.message : '读取失败'));
+    fetchRules().then(setRules).catch(() => setRules(null));
+    fetchInspection().then(setInspection).catch(() => setInspection(null));
   }, []);
 
   if (err) return <div style={{ padding: 24 }}><Alert type="error" showIcon message="读取设置失败" description={err} /></div>;
@@ -130,8 +222,8 @@ export default function SettingsPage() {
         type="info"
         showIcon
         style={{ marginBottom: 14 }}
-        message="这一页是只读的"
-        description="数据位置由环境变量 LOSTPATH_DATA_DIR 决定，改完重启引擎生效。不做成界面可写项是刻意的：那等于让界面指挥服务往任意路径写盘。"
+        message="系统设置只读，用户规则可调整"
+        description="数据位置由环境变量 LOSTPATH_DATA_DIR 决定，改完重启引擎生效。用户保留规则只会阻止计划，不会直接操作文件。"
       />
 
       <Card size="small" title="数据位置" style={{ marginBottom: 12 }}>
@@ -141,12 +233,14 @@ export default function SettingsPage() {
           hint={
             s.paths.override_active
               ? `当前由环境变量 ${s.paths.override_var ?? 'LOSTPATH_DATA_DIR'} 覆盖`
-              : '默认位置（%LOCALAPPDATA%\\LostPath）。在程序目录之外，卸载或更新不会连带删除'
+              : '默认位置（%LOCALAPPDATA%\\LostPath）。在程序目录之外，正常更新不会影响；卸载前仍需先处理回收区'
           }
         />
         <Row label="最新快照" value={<Mono>{s.paths.latest_snapshot}</Mono>} />
         <Row label="图标缓存" value={<Mono>{s.paths.icons_dir}</Mono>} />
         <Row label="便携软件登记" value={<Mono>{s.paths.portable_config}</Mono>} />
+        <Row label="用户规则" value={<Mono>{s.paths.rules_config ?? '—'}</Mono>} />
+        <Row label="巡检配置" value={<Mono>{s.paths.inspection_config ?? '—'}</Mono>} />
       </Card>
 
       <Card size="small" title="上次扫描" style={{ marginBottom: 12 }}>
@@ -155,7 +249,7 @@ export default function SettingsPage() {
             type="warning"
             showIcon={false}
             message="还没有扫描过"
-            description="仪表盘或软件台账里点「重新扫描 C 盘」，之后痕迹归因才有数据。"
+            description="仪表盘或软件台账里点「重新扫描 系统盘」，之后痕迹归因才有数据。"
           />
         ) : (
           <>
@@ -253,6 +347,10 @@ export default function SettingsPage() {
         />
       </Card>
 
+      <InspectionCard report={inspection} onChanged={setInspection} />
+
+      <IgnoredRules report={rules} onChanged={setRules} />
+
       <Card size="small" title="引擎">
         <Row label="监听地址" value={<Mono>{s.engine.bind}</Mono>} hint="只绑回环，外部网络访问不到" />
         <Row
@@ -264,8 +362,7 @@ export default function SettingsPage() {
       </Card>
 
       <Paragraph style={{ fontSize: 11.5, color: 'var(--tx3)', marginTop: 14 }}>
-        写操作只有三处：保存快照、登记便携软件、执行清理/重定向。前两者写在数据根目录内，
-        第三者一律先落回滚记录再动文件。
+        系统集成功能只修改当前用户范围，均需逐项确认并先写恢复记录；服务、计划任务和机器级设置保持只读。
       </Paragraph>
     </div>
   );

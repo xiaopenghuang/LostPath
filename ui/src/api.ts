@@ -101,7 +101,7 @@ export interface SnapshotMeta {
 
 export interface LpData {
   built_from: string;
-  /** 扫描根所在的系统盘，避免把非 C 盘机器的拓扑误标成 C 盘 */
+  /** 扫描根所在的系统盘，避免系统装在其它盘符时仍把拓扑误标成 C 盘 */
   system_drive?: string;
   items: LpNode[];
   software: SoftwareEntity[];
@@ -121,6 +121,385 @@ export interface LpData {
     synthetic_entities: number;
     synthetic_size: number;
   };
+}
+
+export interface HistoryPoint {
+  filename: string | null;
+  scanned_at?: string | null;
+  entries: number;
+  total_size: number;
+  total_files?: number | null;
+  total_dirs?: number | null;
+}
+
+export interface HistoryChange {
+  path: string;
+  name: string;
+  before: number;
+  after: number;
+  delta: number;
+  owner?: string | null;
+}
+
+export interface HistoryReport {
+  current: HistoryPoint | null;
+  previous: HistoryPoint | null;
+  delta: {
+    bytes: number;
+    entries: number;
+    scanned_at?: string | null;
+    compared_to?: string | null;
+  } | null;
+  gainers: HistoryChange[];
+  shrinkers: HistoryChange[];
+  trend: HistoryPoint[];
+  history_count: number;
+}
+
+export interface ResidueEvidence {
+  source: string;
+  conf: number;
+  detail: string;
+}
+
+export interface ResidueCandidate {
+  owner: string;
+  size: number;
+  entries: number;
+  paths: string[];
+  kind: string;
+  confidence: number;
+  evidence: ResidueEvidence[];
+  last_seen?: string | null;
+}
+
+export interface ResidueReport {
+  candidates: ResidueCandidate[];
+  summary: { count: number; total_size: number };
+}
+
+export type StartupKind = 'startup' | 'service' | 'task';
+export type StartupRisk = 'attention' | 'normal' | 'system';
+
+export interface SoftwareRelation {
+  entity_id: string;
+  name: string;
+  publisher?: string | null;
+  icon?: string | null;
+  reason: string;
+  confidence: number;
+}
+
+export interface StartupItem {
+  id: string;
+  kind: StartupKind;
+  name: string;
+  exe?: string | null;
+  source: string;
+  detail?: string | null;
+  state?: string | null;
+  start?: string | null;
+  task_path?: string | null;
+  owner?: string | null;
+  owner_id?: string | null;
+  owner_icon?: string | null;
+  owner_reason?: string | null;
+  owner_confidence?: number | null;
+  risk: StartupRisk;
+  risk_score: number;
+  risk_reason: string;
+  manage: {
+    can_disable: boolean;
+    can_restore: boolean;
+    disabled: boolean;
+    action_id: string | null;
+    reason: string;
+  };
+}
+
+export interface StartupReport {
+  state: 'idle' | 'loading' | 'ready' | 'error';
+  items: StartupItem[];
+  summary: {
+    total: number;
+    startup: number;
+    services: number;
+    tasks: number;
+    attention: number;
+    unknown_exe: number;
+    associated: number;
+    manageable: number;
+    disabled: number;
+  };
+  scanned_at?: string | null;
+  error?: string | null;
+  queued?: boolean;
+}
+
+export type EnvironmentScope = 'user' | 'machine';
+
+export interface EnvironmentItem {
+  id: string;
+  name: string;
+  scope: EnvironmentScope;
+  value: string | null;
+  masked: boolean;
+  preview: string;
+  expandable: boolean;
+  editable: boolean;
+  overridden: boolean;
+  fingerprint: string;
+  relations: SoftwareRelation[];
+}
+
+export interface EnvironmentReport {
+  items: EnvironmentItem[];
+  summary: {
+    total: number; user: number; machine: number; masked: number; overrides: number;
+    associated: number; software: number;
+  };
+  changes: Operation[];
+  read_at: string;
+}
+
+export type RegistryHealthStatus =
+  | 'healthy' | 'location_missing' | 'uninstaller_missing' | 'orphaned' | 'incomplete';
+
+export interface RegistryHealthItem {
+  id: string;
+  name: string;
+  version?: string | null;
+  publisher?: string | null;
+  hive: 'HKCU' | 'HKLM32' | 'HKLM64';
+  scope: EnvironmentScope;
+  estimated_size?: number | null;
+  status: RegistryHealthStatus;
+  reason: string;
+  location?: string | null;
+  location_exists: boolean | null;
+  uninstaller_exists: boolean | null;
+  can_clean: boolean;
+  system_component: boolean;
+  registry_path: string;
+  entity?: SoftwareRelation | null;
+}
+
+export interface RegistryRemovedItem {
+  operation_id: string;
+  name: string;
+  registry_path?: string | null;
+  created_at?: string | null;
+  can_restore: boolean;
+}
+
+export interface RegistryHealthReport {
+  items: RegistryHealthItem[];
+  removed: RegistryRemovedItem[];
+  summary: {
+    total: number; healthy: number; attention: number; orphaned: number;
+    manageable: number; associated: number; removed: number;
+  };
+  read_at: string;
+}
+
+export type ContextMenuKind = 'command' | 'handler';
+
+export interface ContextMenuSurface {
+  id: string;
+  name: string;
+}
+
+export interface ContextMenuManage {
+  disabled: boolean;
+  external: boolean;
+  can_disable: boolean;
+  can_restore: boolean;
+  can_delete: boolean;
+  action_id?: string | null;
+  reason: string;
+}
+
+export interface ContextMenuItem {
+  id: string;
+  kind: ContextMenuKind;
+  name: string;
+  provider?: string | null;
+  scope: EnvironmentScope | 'mixed';
+  hive: string;
+  surfaces: ContextMenuSurface[];
+  registry_paths: string[];
+  target?: string | null;
+  system_component: boolean;
+  custom: boolean;
+  entity?: SoftwareRelation | null;
+  manage: ContextMenuManage;
+}
+
+export interface ContextMenuReport {
+  items: ContextMenuItem[];
+  removed: Array<{
+    operation_id: string;
+    name: string;
+    surface?: string | null;
+    created_at?: string | null;
+    can_restore: boolean;
+  }>;
+  summary: {
+    total: number;
+    commands: number;
+    handlers: number;
+    active: number;
+    disabled: number;
+    associated: number;
+    manageable: number;
+    protected: number;
+    custom: number;
+  };
+  read_at: string;
+}
+
+export interface UninstallItem {
+  id: string;
+  name: string;
+  version?: string | null;
+  publisher?: string | null;
+  scope: EnvironmentScope;
+  hive: string;
+  location?: string | null;
+  location_exists: boolean | null;
+  estimated_size?: number | null;
+  can_uninstall: boolean;
+  reason?: string | null;
+  icon?: string | null;
+  entity?: SoftwareRelation | null;
+}
+
+export interface UninstallRecent {
+  operation_id: string;
+  item_id: string;
+  name: string;
+  status: string;
+  created_at?: string | null;
+  verified_removed: boolean;
+  baseline_captured: boolean;
+  deep_cleaned: boolean;
+  failure?: string | null;
+}
+
+export interface UninstallReport {
+  items: UninstallItem[];
+  recent: UninstallRecent[];
+  summary: {
+    total: number; user: number; system: number; uninstallable: number;
+    needs_repair: number; associated: number;
+  };
+  read_at: string;
+}
+
+export type UninstallAuditKind = 'file' | 'environment' | 'registry' | 'startup';
+
+export interface UninstallAuditCandidate {
+  id: string;
+  item_id?: string | null;
+  kind: UninstallAuditKind;
+  action: 'recycle_directory' | 'env_delete' | 'registry_cleanup' | 'startup_disable' | 'manual';
+  name: string;
+  path?: string | null;
+  size?: number | null;
+  files?: number | null;
+  category?: string | null;
+  scope?: EnvironmentScope;
+  source?: string | null;
+  startup_kind?: StartupKind;
+  status?: string | null;
+  masked?: boolean;
+  can_clean: boolean;
+  recommended: boolean;
+  risk: 'safe' | 'review' | 'manual';
+  reason: string;
+  confidence?: number | null;
+}
+
+export interface UninstallAuditReport {
+  operation_id: string;
+  name: string;
+  entity: { entity_id: string; name: string; publisher?: string | null; icon?: string | null };
+  audited_at: string;
+  startup_state: StartupReport['state'];
+  candidates: UninstallAuditCandidate[];
+  changes: Record<'environment' | 'registry' | 'startup', {
+    before: number; remaining: number; removed: number;
+  }>;
+  summary: {
+    total: number; actionable: number; recommended: number; files: number;
+    environment: number; registry: number; startup: number; file_size: number;
+  };
+}
+
+export interface UninstallCleanupResult {
+  dry_run: boolean;
+  results: Array<{
+    candidate_id: string;
+    name: string;
+    ok: boolean;
+    operation?: Operation;
+    error?: string;
+  }>;
+  succeeded: number;
+  failed: number;
+  audit: UninstallAuditReport;
+}
+
+export interface SoftwareIntegrationItem {
+  id: string;
+  name: string;
+  scope?: EnvironmentScope;
+  hive?: string;
+  registry_path?: string;
+  status?: RegistryHealthStatus;
+  kind?: StartupKind | ContextMenuKind;
+  source?: string;
+  risk?: StartupRisk;
+  masked?: boolean;
+  manage?: StartupItem['manage'];
+  surfaces?: ContextMenuSurface[];
+  reason: string;
+  confidence: number;
+}
+
+export interface SoftwareIntegrationsReport {
+  entity: SoftwareRelation;
+  environment: SoftwareIntegrationItem[];
+  registry: SoftwareIntegrationItem[];
+  startup: SoftwareIntegrationItem[];
+  context_menu: SoftwareIntegrationItem[];
+  startup_state: StartupReport['state'];
+  summary: {
+    environment: number;
+    registry: number;
+    startup: number;
+    context_menu: number;
+    total: number;
+  };
+}
+
+export interface InspectionReport {
+  enabled: boolean;
+  interval_hours: number;
+  last_scanned_at?: string | null;
+  due: boolean;
+}
+
+export interface IgnoreRule {
+  path: string;
+  reason: string;
+  created_at?: string | null;
+}
+
+export interface RulesReport {
+  ignored_paths: IgnoreRule[];
+  count: number;
+  config_path: string;
 }
 
 export interface DriveInfo {
@@ -155,7 +534,7 @@ export interface Plan {
   owner_kind?: string | null;
   cat?: string | null;
   confidence: number;
-  /** 预计能腾出的 C 盘空间 */
+  /** 预计能腾出的 系统盘空间 */
   reclaimable: number;
   target?: string | null;
   env_var?: string | null;
@@ -333,11 +712,21 @@ export interface Operation {
   } | null;
   /** 执行前就落盘的"打算搬到哪"。搬运中途失败时靠它找回数据 */
   recycle_intent?: string | null;
+  /** false 表示只有审计记录，动作本身无法由 LostPath 自动撤销 */
+  rollback_supported?: boolean;
+  /** 后端按当前磁盘/注册表状态实时核对，前端不再靠 status 猜能否恢复 */
+  can_rollback?: boolean;
+  recovery_reason?: string;
 }
 
 export interface OperationsReport {
   operations: Operation[];
-  summary: { total: number; rollbackable: number; recycle_bytes: number };
+  summary: {
+    total: number;
+    rollbackable: number;
+    recovery_attention?: number;
+    recycle_bytes: number;
+  };
 }
 
 /**
@@ -444,6 +833,8 @@ export interface SettingsReport {
     latest_snapshot: string;
     icons_dir: string;
     portable_config: string;
+    rules_config?: string;
+    inspection_config?: string;
     /** true = 走了环境变量覆盖 */
     override_active: boolean;
     /** 覆盖用的变量名，未覆盖时为 null */
@@ -494,8 +885,315 @@ export async function fetchSettings(): Promise<SettingsReport> {
   return r.json();
 }
 
+export async function fetchHistory(limit = 12): Promise<HistoryReport> {
+  const r = await fetch(`/api/history?limit=${limit}`);
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function fetchResidues(): Promise<ResidueReport> {
+  const r = await fetch('/api/residues');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function fetchStartup(): Promise<StartupReport> {
+  const r = await fetch('/api/startup');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function fetchSoftwareIntegrations(
+  entityId: string,
+): Promise<SoftwareIntegrationsReport> {
+  const r = await fetch(`/api/software/${encodeURIComponent(entityId)}/integrations`);
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function refreshStartup(): Promise<StartupReport> {
+  const r = await fetch('/api/startup/refresh', { method: 'POST' });
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function disableStartup(
+  itemId: string,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/startup/disable', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: itemId, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function restoreStartup(
+  operationId: string,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/startup/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function fetchEnvironment(): Promise<EnvironmentReport> {
+  const r = await fetch('/api/environment');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function setEnvironmentValue(
+  name: string,
+  value: string,
+  expectedFingerprint: string | null,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/environment/set', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name, value, expected_fingerprint: expectedFingerprint, dry_run: dryRun,
+    }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function deleteEnvironmentValue(
+  name: string,
+  expectedFingerprint: string,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/environment/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, expected_fingerprint: expectedFingerprint, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function restoreEnvironmentValue(
+  operationId: string,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/environment/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function fetchRegistryHealth(): Promise<RegistryHealthReport> {
+  const r = await fetch('/api/registry-health');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function cleanupRegistryEntry(
+  itemId: string,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/registry-health/cleanup', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: itemId, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function restoreRegistryEntry(
+  operationId: string,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/registry-health/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function fetchContextMenus(refresh = false): Promise<ContextMenuReport> {
+  const r = await fetch(`/api/context-menu${refresh ? '?refresh=true' : ''}`);
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function disableContextMenu(
+  itemId: string,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/context-menu/disable', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: itemId, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function createContextMenu(
+  name: string,
+  executable: string,
+  surfaces: string[],
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/context-menu/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, executable, surfaces, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function deleteContextMenu(
+  itemId: string,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/context-menu/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: itemId, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function restoreContextMenu(
+  operationId: string,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/context-menu/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function fetchUninstall(): Promise<UninstallReport> {
+  const r = await fetch('/api/uninstall');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function launchUninstall(
+  itemId: string,
+  dryRun = true,
+): Promise<{ ok: boolean; op?: Operation; refused?: string }> {
+  const r = await fetch('/api/uninstall/launch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ item_id: itemId, dry_run: dryRun }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, op: body as Operation } : { ok: false, refused: body.refused };
+}
+
+export async function verifyUninstall(operationId: string): Promise<{
+  ok: boolean;
+  result?: { still_installed: boolean; verified_removed: boolean; name: string };
+  catalog?: UninstallReport;
+  residues?: ResidueReport;
+  audit?: UninstallAuditReport | null;
+  audit_error?: string | null;
+  refused?: string;
+}> {
+  const r = await fetch('/api/uninstall/verify', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ operation_id: operationId }),
+  });
+  const body = await r.json();
+  return r.ok ? { ok: true, ...body } : { ok: false, refused: body.refused };
+}
+
+export async function fetchUninstallAudit(operationId: string): Promise<UninstallAuditReport> {
+  const r = await fetch(`/api/uninstall/audit/${encodeURIComponent(operationId)}`);
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.refused ?? `服务返回 ${r.status}`);
+  return body;
+}
+
+export async function deepCleanUninstall(
+  operationId: string,
+  candidateIds: string[],
+  dryRun = true,
+): Promise<{ ok: boolean; result?: UninstallCleanupResult; refused?: string }> {
+  const r = await fetch('/api/uninstall/deep-clean', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      operation_id: operationId, candidate_ids: candidateIds, dry_run: dryRun,
+    }),
+  });
+  const body = await r.json();
+  return r.ok
+    ? { ok: true, result: body as UninstallCleanupResult }
+    : { ok: false, refused: body.refused };
+}
+
+export async function fetchInspection(): Promise<InspectionReport> {
+  const r = await fetch('/api/inspection');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function saveInspection(
+  enabled: boolean,
+  interval_hours: number,
+): Promise<InspectionReport> {
+  const r = await fetch('/api/inspection', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled, interval_hours }),
+  });
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error ?? `服务返回 ${r.status}`);
+  return body;
+}
+
+export async function fetchRules(): Promise<RulesReport> {
+  const r = await fetch('/api/rules');
+  if (!r.ok) throw new Error(`服务返回 ${r.status}`);
+  return r.json();
+}
+
+export async function ignorePath(path: string, reason?: string): Promise<IgnoreRule> {
+  const r = await fetch('/api/rules/ignore', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, reason }),
+  });
+  const body = await r.json();
+  if (!r.ok) throw new Error(body.error ?? `服务返回 ${r.status}`);
+  return body.rule;
+}
+
+export async function removeIgnorePath(path: string): Promise<void> {
+  const r = await fetch('/api/rules/ignore', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}));
+    throw new Error(body.error ?? `服务返回 ${r.status}`);
+  }
+}
+
 export const OP_STATUS_LABEL: Record<string, { text: string; color: string }> = {
-  done: { text: '已完成 · 可回滚', color: 'green' },
+  done: { text: '已完成', color: 'green' },
   rolled_back: { text: '已回滚', color: 'default' },
   failed: { text: '失败', color: 'red' },
   planned: { text: '中途中断，需检查', color: 'orange' },
@@ -503,10 +1201,19 @@ export const OP_STATUS_LABEL: Record<string, { text: string; color: string }> = 
   unreadable: { text: '记录损坏', color: 'red' },
 };
 
-export const ACTION_LABEL: Record<PlanAction, string> = {
+export const ACTION_LABEL: Record<string, string> = {
   redirect: '改环境变量',
   cleanup: '清理缓存',
   junction: '迁移并建链接',
+  startup_disable: '禁用登录启动',
+  env_set: '修改环境变量',
+  env_delete: '删除环境变量',
+  registry_cleanup: '清理失效登记',
+  context_menu_disable: '禁用右键菜单',
+  context_menu_create: '创建右键菜单',
+  context_menu_delete: '删除自定义右键菜单',
+  uninstall_launch: '启动软件卸载器',
+  uninstall_residue_cleanup: '回收卸载残留',
   none: '不处理',
 };
 
@@ -525,6 +1232,7 @@ export const BLOCKER_LABEL: Record<string, string> = {
   env_var_conflict: '同一环境变量被多个目录申领',
   target_full: '目标盘空间不足',
   in_use: '软件正在运行',
+  user_ignored: '用户规则已保留',
 };
 
 export type ScanState = 'idle' | 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -641,7 +1349,7 @@ export function entityStatus(
   plans?: Map<string, Plan> | null,
 ): { key: EntityStatusKey; label: string; color: string } {
   const traces = e.traces ?? [];
-  if (!traces.length) return { key: 'none', label: '无 C 盘痕迹', color: 'default' };
+  if (!traces.length) return { key: 'none', label: '无 系统盘痕迹', color: 'default' };
 
   if (plans) {
     // 子目录级计划的 path 不在 traces 里（traces 只有顶层），靠 parent_path 认领。
@@ -702,13 +1410,14 @@ export async function confirmPortable(
 export function fmtSize(b?: number | null): string {
   if (b == null) return '—';
   const u = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
-  let v = b;
+  const sign = b < 0 ? '-' : '';
+  let v = Math.abs(b);
   let i = 0;
   while (v >= 1024 && i < u.length - 1) {
     v /= 1024;
     i++;
   }
-  return `${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(v >= 10 ? 1 : 2)} ${u[i]}`;
+  return `${sign}${v >= 100 || i === 0 ? Math.round(v) : v.toFixed(v >= 10 ? 1 : 2)} ${u[i]}`;
 }
 
 export const CAT_COLOR: Record<string, string> = {

@@ -5,7 +5,7 @@
 //
 // 只负责画一个已选定的实体，不含选择器。
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Spin } from 'antd';
+import { Alert, Button, Spin } from 'antd';
 import { Graph } from '@antv/g6';
 import { fetchBodyTree, fmtSize, LpNode } from './api';
 
@@ -231,6 +231,7 @@ export default function EntityGraph({
   const [loadingTree, setLoadingTree] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<'loading' | 'ok' | 'fail'>('loading');
+  const [renderKey, setRenderKey] = useState(0);
 
   useEffect(() => {
     setBodyTree(null);
@@ -252,6 +253,7 @@ export default function EntityGraph({
     let graph: any = null;
     (async () => {
       if (!entity) return;
+      setState('loading');
       try {
         if (!ref.current) return;
         // G6 往 0×0 容器渲染时不报错，只是什么都看不见——高度靠 flex/百分比传递时
@@ -315,14 +317,14 @@ export default function EntityGraph({
         /* 忽略 */
       }
     };
-  }, [entity?.id, bodyTree, theme]);
+  }, [entity?.id, bodyTree, theme, renderKey]);
 
   const nothing = !entity || (!entity.location && (entity.traces?.length ?? 0) === 0);
   if (nothing) {
     return (
       <div style={{ height, display: 'grid', placeItems: 'center', padding: 12 }}>
         <span style={{ fontSize: 12, color: 'var(--tx3)', textAlign: 'center' }}>
-          没有可画的关系：既没定位到本体，也没归因到 C 盘痕迹
+          没有可画的关系：既没定位到本体，也没归因到 系统盘痕迹
         </span>
       </div>
     );
@@ -335,8 +337,23 @@ export default function EntityGraph({
         <Alert
           type="warning"
           message="图谱渲染失败（辅助视图）"
+          action={<Button size="small" onClick={() => setRenderKey((value) => value + 1)}>重试</Button>}
           style={{ position: 'absolute', top: 10, left: 10 }}
         />
+      )}
+      {state === 'loading' && !loadingTree && (
+        <div
+          role="status"
+          aria-busy="true"
+          style={{
+            position: 'absolute', top: 8, right: 10, display: 'flex',
+            alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 6,
+            background: 'var(--panel)', border: '1px solid var(--line)',
+          }}
+        >
+          <Spin size="small" />
+          <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--tx2)' }}>绘制图谱…</span>
+        </div>
       )}
       {loadingTree && (
         // tip 在这里更不可能渲染（既非 nest 也非 fullscreen），而图谱上方本来
