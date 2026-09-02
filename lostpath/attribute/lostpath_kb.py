@@ -141,6 +141,8 @@ HIGH_RISK = [
     (r"^[A-Z]:\\ProgramData\\Package Cache$", "VS/VC++ 安装缓存，删除后修复安装失败"),
     (r"^[A-Z]:\\Users\\[^\\]+\\AppData\\Local\\Package Cache$",
      "VS/VC++ 按用户安装缓存，删除后修复/卸载失败"),
+    (r"^[A-Z]:\\ProgramData\\Kaspersky Lab(?:\\.*)?$",
+     "卡巴斯基隔离区、病毒库与自保护服务数据，只能通过产品界面维护"),
 ]
 HIGH_RISK_RE = [(re.compile(p, re.I), why) for p, why in HIGH_RISK]
 

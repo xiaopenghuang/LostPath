@@ -90,6 +90,15 @@ def test_program_data_package_cache_is_high_risk():
 
 
 @pytest.mark.parametrize("p", [
+    r"C:\ProgramData\Kaspersky Lab",
+    r"D:\ProgramData\Kaspersky Lab\AVP21.26\QB",
+])
+def test_kaspersky_live_data_is_high_risk(p):
+    """隔离区、病毒库与自保护数据不能按普通应用目录做 Junction。"""
+    assert KB.high_risk(p), f"卡巴斯基运行数据未被识别为高风险：{p}"
+
+
+@pytest.mark.parametrize("p", [
     r"D:\Windows\Installer",
     r"E:\Windows\WinSxS",
 ])

@@ -68,6 +68,23 @@ def test_high_risk_dir_never_junctioned(tmp_path):
     assert not p.executable
 
 
+def test_live_high_risk_rule_blocks_stale_snapshot(monkeypatch, tmp_path):
+    """旧快照仍写未定性时，计划器也要按当前知识库立即挡住。"""
+    src = make_tree(tmp_path / "SecurityData")
+    monkeypatch.setattr(
+        planner.attribution_kb, "high_risk",
+        lambda path: "安全软件隔离区与自保护数据" if path == str(src) else None,
+    )
+    p = planner.plan_for(
+        rec(src, "SecurityData", cat="未定性"),
+        target_root=str(tmp_path / "E"),
+    )
+    assert not p.executable
+    assert p.action == "none"
+    assert p.cat == "不可动"
+    assert any(b.code == "high_risk" for b in p.blockers)
+
+
 @pytest.mark.parametrize("kind", ["vendor", "container", "system"])
 def test_non_app_owner_not_junctioned(tmp_path, kind):
     """厂商/容器/系统目录不整块搬：影响面超出单个软件。"""

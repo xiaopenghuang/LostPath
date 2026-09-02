@@ -27,6 +27,7 @@ from . import redirect as redirect_mod
 from . import rules as rules_mod
 from . import target_root as target_root_mod
 from .. import sysdirs
+from ..attribute import lostpath_kb as attribution_kb
 
 # 门槛：小目录搬来搬去的收益抵不过风险与用户的注意力成本
 MIN_ACTIONABLE_SIZE = 50 * 1024 * 1024
@@ -253,6 +254,14 @@ def plan_for(record: dict, target_root: str | None = None,
     if is_reparse_point(path):
         p.blockers.append(Blocker(
             "already_linked", "该目录已是 junction/符号链接，体积并不在本盘上"))
+        return p
+    high_risk_reason = attribution_kb.high_risk(path)
+    if high_risk_reason:
+        # 快照可能是在知识库更新前生成的，不能只信里面过期的 cat。计划和执行前都按
+        # 当前规则再判一次，让安全修复无需等待重扫就立即生效。
+        p.cat = "不可动"
+        p.blockers.append(Blocker(
+            "high_risk", f"高风险目录不可处理：{high_risk_reason}"))
         return p
     if size < MIN_ACTIONABLE_SIZE:
         p.blockers.append(Blocker(
