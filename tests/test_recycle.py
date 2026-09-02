@@ -153,6 +153,55 @@ def test_force_purge_requires_naming_the_id(cleaned):
     assert not os.path.exists(op["recycled_to"])
 
 
+def test_force_purge_accepts_explicit_batch_without_touching_others(tmp_path):
+    """一键清空会展开成当前清单 id；批量点名不能波及清单外的新条目。"""
+    operations = []
+    for name in ("first", "second", "arrived-later"):
+        source = tmp_path / name
+        source.mkdir()
+        (source / "data.bin").write_bytes(name.encode())
+        operations.append(executor.execute_cleanup({
+            "path": str(source), "name": name, "size": 100 * 2**20,
+            "files": 1, "cat": "可再生缓存", "owner_kind": "toolchain",
+            "conf": 0.9, "redirect": None, "owner": "测试", "why": "测试",
+        }))
+
+    named = [operations[0]["id"], operations[1]["id"]]
+    result = executor.purge_expired(force_ids=named)
+    assert set(result["purged"]) == set(named)
+    assert all(not os.path.exists(op["recycled_to"]) for op in operations[:2])
+    assert os.path.isdir(operations[2]["recycled_to"]), "清单外的新条目被连带删除"
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows MAX_PATH 回归")
+def test_force_purge_handles_path_that_becomes_long_inside_recycle(tmp_path):
+    r"""源文件路径未超限，但加上回收区前缀后超过 260 字符也必须能删除。
+
+    真机的 VS Code 备份在 262 字符处触发 WinError 3。文件实际存在，失败的是
+    `shutil.rmtree` 递归时仍使用普通 Win32 路径。
+    """
+    source = tmp_path / "long-cache"
+    deep = source
+    while len(str(deep / "payload.bin")) < 245:
+        deep /= "nested-segment"
+    deep.mkdir(parents=True)
+    (deep / "payload.bin").write_bytes(b"payload")
+
+    op = executor.execute_cleanup({
+        "path": str(source), "name": source.name, "size": 100 * 2**20,
+        "files": 1, "cat": "可再生缓存", "owner_kind": "toolchain",
+        "conf": 0.9, "redirect": None, "owner": "测试", "why": "测试",
+    })
+    recycled_file = os.path.join(
+        op["recycled_to"], os.path.relpath(deep / "payload.bin", source))
+    assert len(recycled_file) > 260, "测试路径没有越过 MAX_PATH，前提不成立"
+    assert os.path.exists("\\\\?\\" + recycled_file), "长路径文件在删除前应真实存在"
+
+    result = executor.purge_expired(force_ids=[op["id"]])
+    assert op["id"] in result["purged"], result
+    assert not os.path.exists(op["recycled_to"])
+
+
 def test_purged_entry_cannot_be_rolled_back(cleaned):
     """永久删除之后回滚必须明确拒绝，不能默默"成功"。
 
@@ -192,8 +241,15 @@ def test_purge_survives_locked_entry(cleaned, monkeypatch):
     res = executor.purge_expired()
     assert res["purged"] == []
     assert "删除失败" in res["skipped"][0]["reason"]
-    assert manifest.find(op["id"])["recycled_to"] == op["recycled_to"], \
+    recorded = manifest.find(op["id"])
+    assert recorded["recycled_to"] == op["recycled_to"], \
         "删除失败却把记录标成已清空，数据会变成孤儿"
+    assert recorded["purge_failed_at"]
+    assert recorded["rollback_supported"] is False
+    can_restore, reason = executor.recovery_state(recorded)
+    assert not can_restore and "副本可能不完整" in reason
+    entry = manifest.recycle_entries()[0]
+    assert entry["purge_failed"] is True
 
 
 # ------------------------------- 孤儿目录：显形之后必须也能清掉

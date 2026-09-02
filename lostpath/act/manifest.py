@@ -250,6 +250,8 @@ def recycle_entries() -> list[dict]:
             "status": op.get("status"),
             "env_var": op.get("env_var"),
             "unconfirmed": unconfirmed,
+            "purge_failed": bool(op.get("purge_failed_at")),
+            "purge_failure": op.get("purge_failure"),
             "freed": op.get("freed"),
         })
     out.extend(_unclaimed_recycle_dirs(claimed))

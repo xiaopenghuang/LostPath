@@ -22,12 +22,42 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
   const { message, modal } = App.useApp();
   const [report, setReport] = useState<RecycleReport | null>(null);
   const [err, setErr] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     fetchRecycle()
       .then(setReport)
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, []);
+
+  const removePurgedEntries = useCallback((purgedIds: string[]) => {
+    if (!purgedIds.length) return;
+    const purged = new Set(purgedIds);
+    setReport((current) => {
+      if (!current) return current;
+      const removed = current.entries.filter((entry) => purged.has(entry.id));
+      if (!removed.length) return current;
+      const removedSize = removed.reduce((total, entry) => total + entry.size, 0);
+      const removedExpired = removed.filter((entry) => entry.expired);
+      const removedExpiredSize = removedExpired.reduce(
+        (total, entry) => total + entry.size, 0,
+      );
+      return {
+        ...current,
+        entries: current.entries.filter((entry) => !purged.has(entry.id)),
+        summary: {
+          ...current.summary,
+          count: Math.max(0, current.summary.count - removed.length),
+          total_size: Math.max(0, current.summary.total_size - removedSize),
+          expired_count: Math.max(
+            0, current.summary.expired_count - removedExpired.length,
+          ),
+          expired_size: Math.max(
+            0, current.summary.expired_size - removedExpiredSize,
+          ),
+        },
+      };
+    });
   }, []);
 
   useEffect(reload, [reload]);
@@ -83,19 +113,20 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
         </div>
       ),
       onOk: async () => {
-        setBusy(true);
+        setBusy(e.id);
         try {
           const res = await purgeRecycle([e.id]);
           if (res.purged.includes(e.id)) {
+            removePurgedEntries(res.purged);
             message.success(`已永久删除，腾出 ${fmtSize(e.size)}`);
           } else {
             const s = res.skipped.find((x) => x.id === e.id);
             message.error(s?.reason ?? '删除失败');
+            reload();
           }
-          reload();
           onRefresh?.();
         } finally {
-          setBusy(false);
+          setBusy(null);
         }
       },
     });
@@ -115,10 +146,57 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
         </div>
       ),
       onOk: async () => {
-        const res = await purgeRecycle();
-        message.success(`已删除 ${res.purged.length} 项`);
-        reload();
-        onRefresh?.();
+        setBusy('expired');
+        try {
+          const res = await purgeRecycle();
+          removePurgedEntries(res.purged);
+          message.success(`已删除 ${res.purged.length} 项`);
+          onRefresh?.();
+        } finally {
+          setBusy(null);
+        }
+      },
+    });
+  };
+
+  const purgeAll = () => {
+    if (!report?.entries.length) return;
+    const entries = report.entries;
+    const ids = entries.map((entry) => entry.id);
+    const files = entries.reduce((total, entry) => total + entry.files, 0);
+    modal.confirm({
+      title: `永久删除回收区全部 ${entries.length} 项？`,
+      okText: '确认全部删除',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      content: (
+        <div style={{ fontSize: 'var(--fs-md)' }}>
+          <p>
+            将真正删除 <b>{fmtSize(report.summary.total_size)}</b>
+            （{files} 个文件），包括仍在恢复期内的数据。
+          </p>
+          <p style={{ color: 'var(--red)', marginBottom: 0 }}>
+            删除后全部操作都无法再还原，Junction 迁移留下的原始备份也会一起销毁。
+          </p>
+        </div>
+      ),
+      onOk: async () => {
+        setBusy('all');
+        try {
+          const res = await purgeRecycle(ids);
+          removePurgedEntries(res.purged);
+          if (res.skipped.length === 0) {
+            message.success(`已永久删除 ${res.purged.length} 项，腾出 ${fmtSize(report.summary.total_size)}`);
+          } else {
+            message.warning(
+              `已删除 ${res.purged.length} 项，另有 ${res.skipped.length} 项因状态变化未删除`,
+            );
+            reload();
+          }
+          onRefresh?.();
+        } finally {
+          setBusy(null);
+        }
       },
     });
   };
@@ -206,15 +284,27 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
             }
             valueStyle={{ fontSize: 27, fontWeight: 700, color: 'var(--green)' }}
           />
-          <Button
-            danger
-            icon={<DeleteOutlined />}
-            disabled={s.expired_count === 0}
-            onClick={purgeExpired}
-            style={{ marginLeft: 'auto' }}
-          >
-            清空已过期
-          </Button>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              disabled={s.expired_count === 0 || busy !== null}
+              loading={busy === 'expired'}
+              onClick={purgeExpired}
+            >
+              清空已过期
+            </Button>
+            <Button
+              danger
+              type="primary"
+              icon={<DeleteOutlined />}
+              disabled={s.count === 0 || busy !== null}
+              loading={busy === 'all'}
+              onClick={purgeAll}
+            >
+              一键清空全部
+            </Button>
+          </div>
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--tx3)', marginTop: 12 }}>
           位置 <code className="lp-mono">{s.recycle_root}</code>
@@ -272,6 +362,21 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
                       </Tag>
                     </Tooltip>
                   )}
+                  {e.purge_failed && (
+                    <Tooltip title="永久删除曾中途失败，残留副本可能不完整。可以重试永久删除，但不能再用它自动还原。">
+                      <Tag
+                        bordered
+                        style={{
+                          marginLeft: 6,
+                          color: 'var(--red)',
+                          borderColor: 'var(--red)',
+                          background: 'transparent',
+                        }}
+                      >
+                        删除未完成
+                      </Tag>
+                    </Tooltip>
+                  )}
                 </div>
                 <code
                   className="lp-mono"
@@ -303,8 +408,13 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
                 </Tooltip>
               )}
               {/* 孤儿没有原路径可还原回去，还原按钮对它无意义 */}
-              {e.source_path && (
-                <Button size="small" icon={<UndoOutlined />} onClick={() => restore(e)}>
+              {e.source_path && !e.purge_failed && (
+                <Button
+                  size="small"
+                  icon={<UndoOutlined />}
+                  disabled={busy !== null}
+                  onClick={() => restore(e)}
+                >
                   还原
                 </Button>
               )}
@@ -312,7 +422,8 @@ export default function RecyclePage({ onRefresh }: { onRefresh?: () => void }) {
                 size="small"
                 danger
                 icon={<DeleteOutlined />}
-                loading={busy}
+                disabled={busy !== null}
+                loading={busy === e.id}
                 onClick={() => destroy(e)}
               >
                 永久删除

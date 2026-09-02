@@ -788,6 +788,9 @@ export interface RecycleEntry {
    * 曾经出过回收区实存 3.22 GiB 而界面显示"0 项"的状态，就是因为这类数据不被认领。
    */
   unconfirmed?: boolean;
+  /** 永久删除曾中途失败，残留内容不再保证是完整备份。 */
+  purge_failed?: boolean;
+  purge_failure?: string | null;
   freed?: Operation['freed'];
 }
 
@@ -812,8 +815,8 @@ export async function fetchRecycle(): Promise<RecycleReport> {
 /**
  * 永久删除回收区数据。**不可恢复。**
  *
- * forceIds 为空时只清已过期项；要提前删必须点名 id——后端不接受"清空全部"这种
- * 一刀切指令，避免一次误点毁掉全部可恢复数据。
+ * forceIds 为空时只清已过期项；要提前删必须逐项点名 id。页面的"清空全部"会先读取
+ * 当前清单并展开成明确 id，后端仍不接受不带范围的一刀切指令。
  */
 export async function purgeRecycle(
   forceIds?: string[],

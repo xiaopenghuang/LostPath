@@ -34,6 +34,18 @@ class ExecutionFailed(RuntimeError):
     """执行中途失败。manifest 已落盘，据它判断做到哪了。"""
 
 
+def _extended_windows_path(path: str) -> str:
+    r"""给递归文件操作补 Win32 长路径前缀，外部记录仍保留普通可读路径。"""
+    if os.name != "nt":
+        return path
+    absolute = os.path.abspath(path)
+    if absolute.startswith("\\\\?\\"):
+        return absolute
+    if absolute.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + absolute[2:]
+    return "\\\\?\\" + absolute
+
+
 def _guard(path: str) -> None:
     r"""执行前的最后一道校验。planner 已经判过，这里再判一次防计划过期。
 
@@ -127,7 +139,7 @@ def _move_to_recycle(src: str, op: dict) -> str:
         raise ExecutionFailed(
             f"跨盘复制后不一致：源 {src_files} 个/{src_bytes} 字节，"
             f"目标 {dst_files} 个/{dst_bytes} 字节。源目录未删，数据仍完整")
-    shutil.rmtree(src, ignore_errors=False)
+    shutil.rmtree(_extended_windows_path(src), ignore_errors=False)
     return dst
 
 
@@ -419,10 +431,12 @@ def execute_junction(record: dict, target_root: str | None = None,
 # ------------------------------------------------------------------ 回滚
 def recovery_state(op: dict) -> tuple[bool, str]:
     """Inspect the live system before offering rollback for an interrupted action."""
-    if op.get("rollback_supported") is False:
-        return False, "该操作不支持自动恢复"
     if manifest.is_purged(op):
         return False, "回收区数据已永久删除"
+    if op.get("purge_failed_at"):
+        return False, "永久删除曾中途失败，回收副本可能不完整，不能再自动还原"
+    if op.get("rollback_supported") is False:
+        return False, "该操作不支持自动恢复"
     if op.get("status") not in {"done", "failed", "planned"}:
         return False, f"状态为 {op.get('status')}，无需恢复"
     if op.get("action") not in {
@@ -537,7 +551,7 @@ def rollback(op_id: str) -> dict:
             restored_ok = (files == op.get("source_files")
                            and size == op.get("source_bytes"))
         if restored_ok:
-            shutil.rmtree(target, ignore_errors=False)
+            shutil.rmtree(_extended_windows_path(target), ignore_errors=False)
             manifest.add_step(op, f"target_copy_removed:{target}")
         else:
             leftover = target
@@ -572,14 +586,23 @@ def purge_expired(force_ids: list[str] | None = None) -> dict:
                             "until": op.get("recoverable_until")})
             continue
         try:
-            shutil.rmtree(dst, ignore_errors=False)
+            shutil.rmtree(_extended_windows_path(dst), ignore_errors=False)
         except OSError as e:
+            # rmtree 可能在删掉一部分文件后才遇到锁定项或路径错误。此时残留目录不能
+            # 再被当成完整备份提供回滚，否则会用残缺副本替换正在工作的原路径。
+            manifest.mark(
+                op, op.get("status", "done"),
+                purge_failed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                purge_failure=f"{type(e).__name__}: {e}",
+                rollback_supported=False,
+            )
             skipped.append({"id": op["id"], "reason": f"删除失败：{e}"})
             continue
         # 与 rollback 同一处理：数据删掉后，那个以操作 id 命名的壳子就空了。
         # 只删空目录，非空说明状态与预期不符，留着让人看见。
         _remove_empty_shell(dst)
         manifest.mark(op, op.get("status", "done"), recycled_to=None,
+                      purge_failed_at=None, purge_failure=None,
                       purged_at=datetime.now(timezone.utc)
                       .isoformat(timespec="seconds"))
         purged.append(op["id"])
@@ -614,7 +637,7 @@ def _purge_orphans(force: set[str], known_ids: set[str]) -> tuple[list, list]:
         if shell.name in known_ids or shell.name not in force:
             continue
         try:
-            shutil.rmtree(str(shell), ignore_errors=False)
+            shutil.rmtree(_extended_windows_path(str(shell)), ignore_errors=False)
         except OSError as e:
             skipped.append({"id": shell.name, "reason": f"删除失败：{e}"})
             continue
