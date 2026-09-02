@@ -45,13 +45,17 @@ def call(url, method="GET", body=None, headers=None):
 
 @pytest.fixture
 def engine(tmp_path):
-    """起引擎，并预置一份只含合成目录的快照。"""
+    """起引擎，并预置顶层缓存与继承归因的子目录快照。"""
     data_dir = tmp_path / "data"
     cache = tmp_path / "fakecache"
     (cache / "sub").mkdir(parents=True)
     (cache / "sub" / "x.bin").write_bytes(b"x" * 4096)
+    parent = tmp_path / "Code"
+    child = parent / "WebStorage"
+    child.mkdir(parents=True)
+    (child / "cached.bin").write_bytes(b"cache")
 
-    # 预置快照：只有这一条，所以别的路径都该被拒
+    # 预置快照只含下面两棵测试目录，所以其它路径都该被拒。
     snapdir = data_dir / "snapshots"
     snapdir.mkdir(parents=True)
     (snapdir / "latest.json").write_text(json.dumps({
@@ -63,6 +67,17 @@ def engine(tmp_path):
             "files": 1, "cat": "可再生缓存", "owner_kind": "toolchain",
             "conf": 0.9, "owner": "测试工具", "why": "测试", "redirect": None,
             "children": [],
+        }, {
+            "path": str(parent), "name": "Code", "size": 400 * 2**20,
+            "files": 2, "cat": "未定性", "owner_kind": "app",
+            "conf": 0.93, "owner": "Visual Studio Code", "why": "测试",
+            "redirect": None,
+            "children": [{
+                "path": str(child), "name": "WebStorage", "size": 200 * 2**20,
+                "files": 1, "cat": "可再生缓存", "owner_kind": "app",
+                "conf": 0.0, "owner": "Visual Studio Code", "why": "测试",
+                "redirect": None, "inherited": True,
+            }],
         }],
     }, ensure_ascii=False), encoding="utf-8")
 
@@ -131,6 +146,27 @@ def test_dry_run_is_the_default(engine):
     assert cache.exists(), "dry-run 却动了文件"
     status, ops = call(f"{base}/api/act/operations")
     assert ops["summary"]["total"] == 0, "dry-run 不该留下操作记录"
+
+
+def test_inherited_child_plan_survives_execute_revalidation(engine):
+    r"""子计划展示与执行必须使用同一份继承后的归因上下文。
+
+    `Code\WebStorage` 自身没有归因证据，所以快照里的 conf 是 0；它属于 VS Code
+    的把握来自父目录 93%。计划列表已经继承了这个分数，执行端点若重新取出原始子记录
+    再按 0 分复核，就会把同一条刚展示为可执行的计划拒绝掉。
+    """
+    base, cache = engine
+    child = cache.parent / "Code" / "WebStorage"
+
+    status, report = call(f"{base}/api/plan")
+    assert status == 200, report
+    shown = next(p for p in report["plans"] if p["path"] == str(child))
+    assert shown["executable"] and shown["confidence"] == pytest.approx(0.93)
+
+    status, body = call(f"{base}/api/act/execute", "POST", {"path": str(child)})
+    assert status == 200, body
+    assert body["status"] == "dry_run"
+    assert child.exists(), "dry-run 不应移动子目录"
 
 
 def test_cross_origin_write_is_rejected(engine):

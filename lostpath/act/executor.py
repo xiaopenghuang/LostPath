@@ -57,13 +57,13 @@ def _guard(path: str) -> None:
         raise ExecutionRefused(f"目录不存在（快照可能已过期）：{p}")
 
 
-def _revalidate(record: dict) -> Plan:
+def _revalidate(record: dict, *, as_child: bool = False) -> Plan:
     """拿当下的磁盘实况重算一遍计划。
 
     计划可能是几分钟前算的，期间软件可能启动了、目录可能被删了。执行前重算比信任
     旧计划安全。重算结果不可执行就直接拒绝。
     """
-    fresh = plan_for(record)
+    fresh = plan_for(record, as_child=as_child)
     if not fresh.executable:
         why = "；".join(b.reason for b in fresh.blockers) or "计划已不可执行"
         raise ExecutionRefused(f"计划已失效：{why}")
@@ -132,12 +132,13 @@ def _move_to_recycle(src: str, op: dict) -> str:
 
 
 # ------------------------------------------------------------------ 清理
-def execute_cleanup(record: dict, dry_run: bool = False) -> dict:
+def execute_cleanup(record: dict, dry_run: bool = False, *,
+                    as_child: bool = False) -> dict:
     """清理一个可再生缓存目录：移入回收区 + 写回滚记录。
 
     dry_run=True 时只出记录不动文件，用于让调用方看清将要发生什么。
     """
-    fresh = _revalidate(record)
+    fresh = _revalidate(record, as_child=as_child)
     if fresh.action != "cleanup":
         raise ExecutionRefused(f"该目录的计划动作是 {fresh.action}，不是 cleanup")
     src = fresh.path
@@ -230,12 +231,12 @@ def execute_residue_recycle(candidate: dict, parent_operation_id: str,
 
 # ------------------------------------------------------------------ 重定向
 def execute_redirect(record: dict, target_root: str | None = None,
-                     dry_run: bool = False) -> dict:
+                     dry_run: bool = False, *, as_child: bool = False) -> dict:
     """改环境变量把缓存指到新盘，然后把旧缓存移入回收区。
 
     不复制旧文件：这是可再生缓存，让软件在新位置重新下载比搬运可靠，也避免搬运中损坏。
     """
-    fresh = plan_for(record, target_root=target_root)
+    fresh = plan_for(record, target_root=target_root, as_child=as_child)
     if not fresh.executable:
         why = "；".join(b.reason for b in fresh.blockers) or "计划不可执行"
         raise ExecutionRefused(f"计划已失效：{why}")
@@ -313,7 +314,7 @@ def _is_junction(path: str) -> bool:
 
 
 def execute_junction(record: dict, target_root: str | None = None,
-                     dry_run: bool = False) -> dict:
+                     dry_run: bool = False, *, as_child: bool = False) -> dict:
     r"""把目录搬到别的盘，原位留一个 junction 指过去。
 
     给"不能删、又没有官方重定向机制"的目录用——数据一字不少地留着，只是不再占 C 盘。
@@ -335,7 +336,7 @@ def execute_junction(record: dict, target_root: str | None = None,
     """
     import _winapi
 
-    fresh = plan_for(record, target_root=target_root)
+    fresh = plan_for(record, target_root=target_root, as_child=as_child)
     if not fresh.executable:
         why = "；".join(b.reason for b in fresh.blockers) or "计划不可执行"
         raise ExecutionRefused(f"计划已失效：{why}")

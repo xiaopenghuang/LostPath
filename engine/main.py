@@ -807,7 +807,8 @@ def api_set_override(req: OverrideReq):
     之后一路进 os.path.join。不限制的话调用方可以为任意路径预置一条覆盖，等哪天
     那个路径进了快照就按它执行——把"现在无害的写入"变成"以后的任意目标"。
     """
-    if not _record_by_path(req.source):
+    match = _record_by_path(req.source)
+    if not match:
         return JSONResponse(status_code=404, content={
             "error": "该路径不在当前快照里。只能为扫描过的目录设置目标位置"})
     res = target_root_mod.set_override(req.source, req.path)
@@ -815,8 +816,8 @@ def api_set_override(req: OverrideReq):
         return JSONResponse(status_code=400, content=res)
     # 回一个"这条现在会搬到哪"，免得界面自己再拼一遍镜像后缀——那等于把
     # planner 的规则复制到前端，两份实现必然漂移。
-    record = _record_by_path(req.source)
-    plan = planner.plan_for(record)
+    record, as_child = match
+    plan = planner.plan_for(record, as_child=as_child)
     return {**res, "target": plan.target, "action": plan.action}
 
 
@@ -864,17 +865,18 @@ def api_plan(target_root: str | None = None):
 # 路径必须在快照中存在，才可能被执行；执行器内部还会拿磁盘实况重新出计划并二次校验。
 
 
-def _record_by_path(path: str) -> dict | None:
+def _record_by_path(path: str) -> tuple[dict, bool] | None:
+    """返回权威快照记录及其是否为子目录计划输入。"""
     items, meta = snapshots.load_latest()
     if not meta.get("present"):
         return None
     low = (path or "").lower().rstrip("\\")
     for r in items:
         if (r.get("path") or "").lower().rstrip("\\") == low:
-            return r
+            return r, False
         for c in r.get("children") or []:
             if (c.get("path") or "").lower().rstrip("\\") == low:
-                return c
+                return planner.child_record_with_parent_context(c, r), True
     return None
 
 
@@ -892,23 +894,28 @@ def api_act_execute(req: ExecuteReq):
     if bad:
         return JSONResponse(status_code=400, content={
             "error": "指定的目标位置不能用", "detail": bad})
-    record = _record_by_path(req.path)
-    if not record:
+    match = _record_by_path(req.path)
+    if not match:
         return JSONResponse(status_code=404, content={
             "error": "该路径不在当前快照里。只能处理扫描过的目录；"
                      "若刚装了新软件请先重新扫描"})
+    record, as_child = match
     try:
         # 按动作分派。target_root 必须一起传进去重算：junction 的容量检查要看目标盘，
         # 不传的话这里算出的动作可能与界面上展示的那条计划不是同一个。
-        action = planner.plan_for(record, target_root=root).action
+        action = planner.plan_for(
+            record, target_root=root, as_child=as_child).action
         if action == "redirect":
             op = executor.execute_redirect(record, target_root=root,
-                                           dry_run=req.dry_run)
+                                           dry_run=req.dry_run,
+                                           as_child=as_child)
         elif action == "junction":
             op = executor.execute_junction(record, target_root=root,
-                                           dry_run=req.dry_run)
+                                           dry_run=req.dry_run,
+                                           as_child=as_child)
         else:
-            op = executor.execute_cleanup(record, dry_run=req.dry_run)
+            op = executor.execute_cleanup(
+                record, dry_run=req.dry_run, as_child=as_child)
     except executor.ExecutionRefused as e:
         return JSONResponse(status_code=409, content={"refused": str(e)})
     except executor.ExecutionFailed as e:

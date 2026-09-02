@@ -633,6 +633,20 @@ def _with_inherited_conf(child: dict, parent: dict) -> dict:
     return out
 
 
+def child_record_with_parent_context(child: dict, parent: dict) -> dict:
+    """把快照里的原始子记录补成可独立复核的计划输入。
+
+    计划列表与执行端点都会从快照重新取记录。两边必须复用同一套父级上下文，否则
+    列表里已经继承到父目录置信度的子计划，会在执行端点退回原始 conf=0 并被误拒。
+    """
+    out = _with_inherited_conf(child, parent)
+    if out.get("owner") is None and parent.get("owner") is not None:
+        out = dict(out)
+        out["owner"] = parent.get("owner")
+        out["owner_kind"] = out.get("owner_kind") or parent.get("owner_kind")
+    return out
+
+
 def _child_candidates(records: list[dict], root: str | None,
                       pdirs: set[str], env_lookup=None) -> list[Plan]:
     r"""给每个"定性可清理的子目录"出一份候选计划。
@@ -650,7 +664,7 @@ def _child_candidates(records: list[dict], root: str | None,
         for c in r.get("children") or []:
             if c.get("cat") not in CLEANABLE_CATS:
                 continue
-            cp = plan_for(_with_inherited_conf(c, r), target_root=root,
+            cp = plan_for(child_record_with_parent_context(c, r), target_root=root,
                           process_dirs=pdirs, as_child=True,
                           env_lookup=env_lookup)
             cp.parent_path = r.get("path")
